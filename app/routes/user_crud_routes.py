@@ -1,11 +1,12 @@
 from flask import Blueprint, jsonify,request
-from app.models import Users, UssdSession
+from app.models import AidTokens, DistributionSession, Users, UssdSession
 from app import db
 from app.tokens import generate_aid_token 
 from werkzeug.security import check_password_hash
 from flask import current_app
 from app.routes.auth_routes import login,register
-import datetime
+from datetime import datetime
+from app.Admin.audit import log_action
 
 
 user_bp = Blueprint('user_bp',__name__,)
@@ -14,26 +15,35 @@ user_bp = Blueprint('user_bp',__name__,)
 @user_bp.route('/download-beneficiaries', methods=['GET'])
 def download_beneficiaries():
     beneficiaries = Users.query.all()
-    
     data = []
+
     for user in beneficiaries:
         # Auto-generate aid_token if missing
         if not user.aid_token:
-            generate_aid_token(user)
-        
-        # Ensure token_status is set correctly
-        if not user.token_status:
-            user.token_status = 'active'
+            token = generate_aid_token(user)
+            # Save token in DB
+            new_token = AidTokens(
+                user_id=user.id,
+                aid_token=token,
+                token_status='active',
+                token_issued_at=datetime.utcnow(),
+                distribution_session_id=None
+            )
+            db.session.add(new_token)
             db.session.commit()
+
+            # 🔐 Audit Log for automatic token creation
+            log_action(user.id, "Token Issued", f"Token {token} issued automatically for {user.first_name} {user.second_name}")
 
         data.append({
             "national_id": user.national_id,
             "name": f"{user.first_name} {user.second_name}",
-            "aid_token": user.aid_token,
-            "token_status": user.token_status,
+            "aid_token": getattr(user, "aid_token", None),
+            "token_status": getattr(user, "token_status", None)
         })
-    
+
     return jsonify(data), 200
+
 
 #USSD
 @user_bp.route('/callback', methods=['POST'])
@@ -45,7 +55,7 @@ def ussd_callback():
     response = ""   #  initialize response
 
 
-    # HANDLE GLOBAL BACK OPTION
+
    # HANDLE GLOBAL BACK OPTION
     if text:
      parts = text.split("*")
@@ -113,7 +123,7 @@ def ussd_callback():
         elif len(parts) == 2:  # User submitted password
             password = parts[1]
 
-            # Find user by phone number
+            
             user = Users.query.filter_by(contact=contact).first()
 
             if not user or not check_password_hash(user.password, password):
@@ -125,12 +135,12 @@ def ussd_callback():
                 session = UssdSession(session_id=session_id,
                                        user_id=user.id, 
                                        authenticated=True,
-                                       last_active=datetime.datetime.utcnow())
+                                       last_active=datetime.utcnow())
                 db.session.add(session)
             else:
                 session.user_id = user.id
                 session.authenticated = True
-                session.last_active = datetime.datetime.utcnow()
+                session.last_active = datetime.utcnow()
             db.session.commit()
 
             response = f"CON Welcome {user.first_name}\n"
@@ -151,35 +161,71 @@ def ussd_callback():
 
             if choice == "1":
 
-                now = datetime.datetime.utcnow()
 
-                if user.token_status == "active":
-                    if user.token_expires_at and user.token_expires_at < now:
-                        user.token_status = "expired"
-                        db.session.commit()
-                else:
-                 return "END You already have an active token.", 200       
-            
+            #Find active didtribution session
+               
+                active_session = DistributionSession.query.filter_by(is_active=True).first()
+
+                if not active_session:
+                    return "END No active distribution session.", 200
+
+                if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
+                    return "END No active distribution session.", 200
+
+                # Check if user already has token in THIS distribution session
+                existing_token = AidTokens.query.filter_by(
+                    user_id=user.id,
+                    distribution_session_id=active_session.id
+                ).filter(AidTokens.token_status.in_(["active", "inactive"])).first()
+
+                if existing_token:
+                    if existing_token.token_status == "active":
+                        return "END You already have an active token for this session.", 200
+                    if existing_token.token_status == "used":
+                        return "END You have already used your token for this session.", 200
+                    if existing_token.token_status == "expired":
+                        return "END Distribution Session Has Ended.", 200
+                
 
                               
                 token = generate_aid_token(user)
 
-                user.aid_token=token
-                user.token_status="active"
-                user.token_issued_at=now.datetime.utcnow()
-                #user.token_expires_at=now + datetime.timedelta(minutes=30)
-
+                new_token = AidTokens (
+                    user_id=user.id,
+                    aid_token=token,
+                    token_status='active',
+                    token_issued_at=datetime.utcnow(),
+                    distribution_session_id=active_session.id
+                )
+                db.session.add(new_token)
                 db.session.commit()
+# Log token issuance in AuditLog
+                log_action(user.id, "Token Issued", f"Aid token {token} issued to {user.first_name} {user.second_name}")
 
                 print(f"Send SMS to {user.contact}: Your Aid Token is {token}")
                 response = "END Token sent via SMS."
 
             elif choice == "2":
+                active_session = DistributionSession.query.filter_by(is_active=True).first()
+                if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
+                    token.token_status = 'expired'
+                    db.session.commit()
+                    return "END Distribution session expired. Your token is now expired.", 200
 
-                if not user.aid_token:
-                    return"END You have not requested a token",200
+                if not active_session:
+                    return "END No active distribution session.", 200
+
+                token = AidTokens.query.filter_by(
+                    user_id=user.id,
+                    distribution_session_id=active_session.id
+                ).first()
+
+                if not token:
+                    return "END You have not requested a token.", 200
+
+                response = f"END Token: {token.aid_token}\nStatus: {token.token_status}"
+
                 
-                response = f"END Token: {user.aid_token}\nStatus: {user.token_status}"
 
 
             elif choice == "9":
@@ -203,4 +249,6 @@ def ussd_callback():
     else:
         response = "END Invalid option."
 
-    return response, 200
+    return response, 200    
+   
+   
