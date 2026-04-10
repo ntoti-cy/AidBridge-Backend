@@ -1,0 +1,47 @@
+{% extends 'admin/master.html' %}
+
+{% block body %}
+<div class="container mt-5">
+    <div class="jumbotron bg-light p-5 rounded shadow-sm">
+        <h1 class="display-4 text-primary">AidBridge Command Center</h1>
+        <p class="lead">Secure Offline Mobile System for Humanitarian Aid Distribution.</p>
+        <hr class="my-4">
+        <p>Use the navigation tabs above to manage field officers, verify beneficiaries, and monitor the immutable audit logs.</p>
+    </div>
+
+    <h3 class="mt-5 mb-4">System Overview</h3>
+    <div class="row">
+        
+        <div class="col-md-4">
+            <div class="card text-white bg-success mb-3 shadow">
+                <div class="card-header">Total Beneficiaries</div>
+                <div class="card-body">
+                    <h2 class="card-title text-center">{{ total_beneficiaries }}</h2>
+                    <p class="card-text text-center text-light">Registered for Aid</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card text-white bg-info mb-3 shadow">
+                <div class="card-header">Active Field Officers</div>
+                <div class="card-body">
+                    <h2 class="card-title text-center">{{ total_officers }}</h2>
+                    <p class="card-text text-center text-light">Deployed on Ground</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card text-white bg-warning mb-3 shadow">
+                <div class="card-header">Pending Aid Tokens</div>
+                <div class="card-body">
+                    <h2 class="card-title text-center">{{ active_tokens }}</h2>
+                    <p class="card-text text-center text-dark">Awaiting Distribution</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

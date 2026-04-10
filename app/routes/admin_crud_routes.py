@@ -77,6 +77,7 @@ def create_aid_worker(current_user):
         password=hashed_password,
         user_type='smartphone',
         role='aid_worker',
+        requires_password_change=True,
         current_jti=None
     )
 

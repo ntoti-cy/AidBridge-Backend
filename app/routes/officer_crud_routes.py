@@ -1,13 +1,17 @@
 from flask import Blueprint, jsonify, request
-from app.models import  AidTokens, DistributionSession
+from app.Admin.audit import log_action
+from app.models import  AidTokens, DistributionSession, Users
 from app import db
 from datetime import datetime
+from app.tokens import generate_aid_token, token_required
 
 
 officer_bp = Blueprint('officer_bp', __name__)
 
+
 @officer_bp.route('/start-distribution-session', methods=['POST'])
-def start_distribution_session():
+@token_required
+def start_distribution_session(current_user_id):
     # Logic to start a distribution session
     
     aid_center_name = request.json.get('aid_center_name')
@@ -31,7 +35,8 @@ def start_distribution_session():
         "session_id": session.id}), 200
    
 @officer_bp.route('/end-distribution-session/<int:session_id>', methods=['POST'])
-def end_distribution_session(session_id):
+@token_required
+def end_distribution_session(current_user_id, session_id):
     session = DistributionSession.query.get(session_id)
     if not session:
         return jsonify({"error": "Session not found"}), 404
@@ -48,7 +53,8 @@ def end_distribution_session(session_id):
     return jsonify({"message": "Distribution session ended"}), 200
 
 @officer_bp.route('/verify-token', methods=['POST'])
-def verify_token():
+@token_required
+def verify_token(current_user_id):
 
     # manual token OR QR value
     token_value = request.json.get("aid_token")
@@ -94,4 +100,38 @@ def verify_token():
         "message": "Token verified successfully",
         "beneficiary_id": token.user_id,
         "distribution_center": session.aid_center_name
+    }), 200
+
+
+
+@officer_bp.route('/download-beneficiaries', methods=['GET'])
+@token_required
+def download_beneficiaries(current_user_id):
+    # Find the currently active distribution session
+    active_session = DistributionSession.query.filter_by(is_active=True).first()
+
+    if not active_session:
+        return jsonify({"error": "No active distribution session found."}), 404
+
+    # Get ONLY the tokens that belong to this specific active session
+    session_tokens = AidTokens.query.filter_by(distribution_session_id=active_session.id).all()
+
+    data = []
+
+    # Loop through the tokens and fetch the matching User details
+    for token in session_tokens:
+        user = Users.query.get(token.user_id) 
+        
+        if user:
+            data.append({
+                "national_id": user.national_id,
+                "name": f"{user.first_name} {user.second_name}",
+                "aid_token": token.aid_token, 
+                "token_status": token.token_status
+            })
+
+    return jsonify({
+        "message": "Data downloaded successfully",
+        "session_name": active_session.aid_center_name,
+        "beneficiaries": data
     }), 200

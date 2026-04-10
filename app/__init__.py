@@ -2,7 +2,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
-from flask_admin import Admin 
+
 
 
 db = SQLAlchemy()
@@ -31,11 +31,13 @@ def create_app():
     from app.routes.user_crud_routes import user_bp
     from app.routes.officer_crud_routes import officer_bp
     from app.routes.admin_crud_routes import admin_bp
+    from app.routes.crud_routes import crud_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(user_bp, url_prefix='/api/user')
     app.register_blueprint(officer_bp, url_prefix='/api/officer')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
+    app.register_blueprint(crud_bp, url_prefix='/api/crud')
 
 
 

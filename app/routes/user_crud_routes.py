@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify,request
 from app.models import AidTokens, DistributionSession, Users, UssdSession
 from app import db
-from app.tokens import generate_aid_token 
+from app.tokens import generate_aid_token, token_required 
 from werkzeug.security import check_password_hash
 from flask import current_app
 from app.routes.auth_routes import login,register
@@ -10,40 +10,6 @@ from app.Admin.audit import log_action
 
 
 user_bp = Blueprint('user_bp',__name__,)
-
-
-@user_bp.route('/download-beneficiaries', methods=['GET'])
-def download_beneficiaries():
-    beneficiaries = Users.query.all()
-    data = []
-
-    for user in beneficiaries:
-        # Auto-generate aid_token if missing
-        if not user.aid_token:
-            token = generate_aid_token(user)
-            # Save token in DB
-            new_token = AidTokens(
-                user_id=user.id,
-                aid_token=token,
-                token_status='active',
-                token_issued_at=datetime.utcnow(),
-                distribution_session_id=None
-            )
-            db.session.add(new_token)
-            db.session.commit()
-
-            # 🔐 Audit Log for automatic token creation
-            log_action(user.id, "Token Issued", f"Token {token} issued automatically for {user.first_name} {user.second_name}")
-
-        data.append({
-            "national_id": user.national_id,
-            "name": f"{user.first_name} {user.second_name}",
-            "aid_token": getattr(user, "aid_token", None),
-            "token_status": getattr(user, "token_status", None)
-        })
-
-    return jsonify(data), 200
-
 
 #USSD
 @user_bp.route('/callback', methods=['POST'])
@@ -207,13 +173,16 @@ def ussd_callback():
 
             elif choice == "2":
                 active_session = DistributionSession.query.filter_by(is_active=True).first()
-                if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
-                    token.token_status = 'expired'
-                    db.session.commit()
-                    return "END Distribution session expired. Your token is now expired.", 200
 
                 if not active_session:
                     return "END No active distribution session.", 200
+
+                if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
+                    # token.token_status = 'expired'
+                    # db.session.commit()
+                    return "END Distribution session expired. Your token is now expired.", 200
+
+                
 
                 token = AidTokens.query.filter_by(
                     user_id=user.id,
@@ -252,3 +221,66 @@ def ussd_callback():
     return response, 200    
    
    
+   
+@user_bp.route('/request-token', methods=['POST', 'GET'])
+@token_required
+def request_smartphone_token(current_user_id):
+    # Verify User (Smartphone users)
+    user = Users.query.get(current_user_id)
+    if not user:
+        return jsonify({"error": "Beneficiary not found"}), 404
+
+    # Find the active distribution session
+    active_session = DistributionSession.query.filter_by(is_active=True).first()
+
+    if not active_session:
+        return jsonify({"error": "No active distribution session at the moment."}), 404
+
+    if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
+        return jsonify({"error": "The active distribution session has expired."}), 400
+
+    # Check if user already has a token for the session
+    existing_token = AidTokens.query.filter_by(
+        user_id=user.id,
+        distribution_session_id=active_session.id
+    ).first()
+
+    if existing_token:
+        if existing_token.token_status == "active":
+            # Return the existing token so Flutter can redraw the QR code
+            return jsonify({
+                "message": "Retrieved existing active token.",
+                "aid_token": existing_token.aid_token,
+                "token_status": existing_token.token_status,
+                "session_name": active_session.aid_center_name
+            }), 200
+            
+        elif existing_token.token_status == "used":
+            return jsonify({"error": "You have already received your aid for this session."}), 400
+            
+        elif existing_token.token_status == "expired":
+            return jsonify({"error": "Your token for this session has expired."}), 400
+
+    # 4. Generate new token if they don't have one
+    token_string = generate_aid_token(user)
+
+    new_token = AidTokens(
+        user_id=user.id,
+        aid_token=token_string,
+        token_status='active',
+        token_issued_at=datetime.utcnow(),
+        distribution_session_id=active_session.id
+    )
+    db.session.add(new_token)
+    db.session.commit()
+
+    # 5. Log the action
+    log_action(user.id, "Token Issued", f"Aid token {token_string} issued to smartphone user {user.first_name} {user.second_name}")
+
+    # 6. Send the token data back to Flutter
+    return jsonify({
+        "message": "Token generated successfully",
+        "aid_token": token_string,
+        "token_status": "active",
+        "session_name": active_session.aid_center_name
+    }), 201
