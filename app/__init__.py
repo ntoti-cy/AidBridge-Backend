@@ -42,7 +42,7 @@ def create_app():
 
     @app.route("/")
     def home():
-        return "AidBridge API is running 🚀"
+        return "AidBridge API is running"
 
 
 
