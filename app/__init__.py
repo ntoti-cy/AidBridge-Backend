@@ -40,6 +40,11 @@ def create_app():
     app.register_blueprint(crud_bp, url_prefix='/api/crud')
 
 
+    @app.route("/")
+    def home():
+        return "AidBridge API is running 🚀"
+
+
 
     # Initialize Admin Panel
    
