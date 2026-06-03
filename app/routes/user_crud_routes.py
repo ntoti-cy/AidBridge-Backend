@@ -284,3 +284,27 @@ def request_smartphone_token(current_user_id):
         "token_status": "active",
         "session_name": active_session.aid_center_name
     }), 201
+
+@user_bp.route('/token-history', methods=['GET'])
+@token_required
+def get_token_history(current_user_id):
+    # Fetch all tokens requested by this beneficiary, sorted by newest first
+    tokens = AidTokens.query.filter_by(user_id=current_user_id).order_by(AidTokens.token_issued_at.desc()).all()
+
+    history_data = []
+    for token in tokens:
+        # Check the distribution session to get the actual center name
+        session = DistributionSession.query.get(token.distribution_session_id) if token.distribution_session_id else None
+        
+        history_data.append({
+            "id": token.id,
+            "aid_token": token.aid_token,
+            "token_status": token.token_status,
+            "token_issued_at": token.token_issued_at.strftime('%Y-%m-%d %H:%M:%S') if token.token_issued_at else None,
+            "session_name": session.aid_center_name if session else "General Distribution"
+        })
+
+    return jsonify({
+        "message": "Token history retrieved successfully",
+        "history": history_data
+    }), 200  
