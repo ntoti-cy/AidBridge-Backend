@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -12,12 +14,19 @@ migrate = Migrate()
 def create_app():
     app = Flask(__name__)
 
+
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if  not DATABASE_URL:
+        DATABASE_URL = "postgresql://postgres:database@localhost/Aidbridge_db"
+
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
     # Configs
 
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"connect_args": {"check_same_thread": False}}
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SECRET_KEY'] = 'This is the secret-key'
+    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY','default-secret-key')
 
        
     CORS(app)
@@ -52,7 +61,7 @@ def create_app():
     init_admin(app)
 
 # Create tables if they don't exist
-    with app.app_context():
-        db.create_all()
+    # with app.app_context():
+    #     db.create_all()
 
     return app
