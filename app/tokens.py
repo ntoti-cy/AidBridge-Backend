@@ -1,7 +1,7 @@
 from functools import wraps
 from flask import request, jsonify, current_app
 import jwt
-from app.models import Users
+from app.models import Household, Users
 from app.models import TokenBlocklist
 from datetime import datetime
 import uuid
@@ -45,4 +45,17 @@ def token_required(f):
 #AidBridge tokens 
 def generate_aid_token(user: Users):
     return str(uuid.uuid4()).replace("-", "").upper()[:10]
-   
+
+
+#complete profile required 
+def profile_required(f):
+    @wraps(f)
+    def decorated(current_user_id, *args, **kwargs):
+        household = Household.query.filter_by(user_id=current_user_id).first()
+        
+        # Check if household exists and if profile is marked complete
+        if not household or not household.is_profile_complete:
+            return jsonify({"error": "Profile incomplete. Please complete setup."}), 403
+            
+        return f(current_user_id, *args, **kwargs)
+    return decorated

@@ -26,7 +26,7 @@ def create_app():
 
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY','default-secret-key')
+    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY','#aidbridge_super_secret_key_2026')
 
        
     CORS(app)

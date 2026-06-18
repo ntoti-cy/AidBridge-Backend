@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.Admin.audit import log_action
-from app.models import  AidTokens, DistributionSession, Users
+from app.models import  AidTokens, DistributionCenter, Users
 from app import db
 from datetime import datetime
 from app.tokens import generate_aid_token, token_required
@@ -12,45 +12,56 @@ officer_bp = Blueprint('officer_bp', __name__)
 @officer_bp.route('/start-distribution-session', methods=['POST'])
 @token_required
 def start_distribution_session(current_user_id):
-    # Logic to start a distribution session
-    
-    aid_center_name = request.json.get('aid_center_name')
-    expiry_time_str= request.json.get('expiry_time') 
-    
-    if not aid_center_name or not expiry_time_str:
-        return "Missing required fields", 400
-    
-    session= DistributionSession(
-        aid_center_name=aid_center_name,
-        expiry_time=datetime.strptime(expiry_time_str, '%Y-%m-%d %H:%M:%S'),
-        is_active=True
+    # verify the officer is assigned to a center
+    worker = Users.query.get(current_user_id)
+    if not worker.assigned_center_id:
+        return jsonify({"error": "You must be assigned to a distribution center ."}), 403
+    center = DistributionCenter.query.get(worker.assigned_center_id)
 
-        
-    )
-    db.session.add(session)
+    center.is_active = True
+    center.start_time = datetime.utcnow()
+
+    expiry_time_str = request.json.get("expiry_time")
+    if expiry_time_str:
+        center.expiry_time = datetime.strptime(expiry_time_str, "%Y-%m-%d %H:%M:%S")
+
     db.session.commit()
 
+    log_action(
+        current_user_id,
+        "Distribution Session Started",
+        f"Officer {worker.first_name} {worker.second_name} started distribution session at center {center.aid_center_name}"
+    )
+
     return jsonify({
-        "message": "Distribution session started", 
-        "session_id": session.id}), 200
-   
+        "message": f"Distribution session started for {center.aid_center_name}",
+        "center_id": center.id
+    }), 200
+
+
+
 @officer_bp.route('/end-distribution-session/<int:session_id>', methods=['POST'])
 @token_required
 def end_distribution_session(current_user_id, session_id):
-    session = DistributionSession.query.get(session_id)
-    if not session:
-        return jsonify({"error": "Session not found"}), 404
-    
-    #Expires all unused active aid tokens
+    worker = Users.query.get(current_user_id)
+    center = DistributionCenter.query.get(worker.assigned_center_id)
+
+    if not center:
+        return jsonify({"error": "Center Session not found"}), 404
+
     AidTokens.query.filter_by(
-        distribution_session_id=session_id,
-        token_status='active'
-        ).update({"token_status": "expired"})
-    
-    session.is_active = False
+        distribution_center_id=center.id).update({"token_status": "expired"})
+
+
+    center.is_active = False  
     db.session.commit()
 
-    return jsonify({"message": "Distribution session ended"}), 200
+    log_action(
+        current_user_id,
+        "Distribution Session Ended",
+        f"Officer {worker.first_name} {worker.second_name} ended distribution session at center {center.aid_center_name}"
+    )
+    return jsonify({"message": f"Distribution session for {center.aid_center_name} ended"}), 200
 
 @officer_bp.route('/verify-token', methods=['POST'])
 @token_required
@@ -68,10 +79,10 @@ def verify_token(current_user_id):
     if not token:
         return jsonify({"error": "Invalid token"}), 404
 
-    session = DistributionSession.query.get(token.distribution_session_id)
+    session = DistributionCenter.query.get(token.distribution_center_id)
 
     #Ensure token belongs to the session
-    if not token.distribution_session_id == session.id:
+    if not token.distribution_center_id == session.id:
         return jsonify({"error": "Token not associated with an active session"}), 400
 
     # Check session exists and active
@@ -108,13 +119,13 @@ def verify_token(current_user_id):
 @token_required
 def download_beneficiaries(current_user_id):
     # Find the currently active distribution session
-    active_session = DistributionSession.query.filter_by(is_active=True).first()
+    active_session = DistributionCenter.query.filter_by(is_active=True).first()
 
     if not active_session:
         return jsonify({"error": "No active distribution session found."}), 404
 
     # Get ONLY the tokens that belong to this specific active session
-    session_tokens = AidTokens.query.filter_by(distribution_session_id=active_session.id).all()
+    session_tokens = AidTokens.query.filter_by(distribution_center_id=active_session.id).all()
 
     data = []
 

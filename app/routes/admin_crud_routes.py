@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
-from app.models import Users
+from sqlalchemy import func
+from app.models import DistributionCenter, Household, Household, Users
 from app import db
 from werkzeug.security import generate_password_hash
 from app.Admin.audit import log_action
@@ -96,3 +97,58 @@ def create_aid_worker(current_user):
         'user_id': new_worker.id,
         'role': new_worker.role
     }), 201
+
+
+
+@admin_bp.route('/assign-worker-to-center', methods=['POST'])
+@admin_required
+def assign_worker(current_user):
+    data = request.get_json()
+    worker_id = data.get('worker_id')
+    center_id = data.get('center_id')
+    
+    worker = Users.query.get(worker_id)
+    center = DistributionCenter.query.get(center_id)
+    
+    if not worker or not center:
+        return jsonify({"error": "Worker or Center not found"}), 404
+    
+    
+    worker.assigned_center_id = center.id
+    db.session.commit()
+    
+    
+    log_action(
+        current_user.id, 
+        "Worker Assigned to Center", 
+        f"Admin {current_user.first_name} assigned worker {worker.first_name} {worker.second_name} to center {center.aid_center_name}"
+    )
+    
+    return jsonify({
+        "message": f"Worker {worker.first_name} assigned to {center.aid_center_name} successfully"
+    }), 200
+
+@admin_bp.route('/analytics/summary', methods=['GET'])
+@admin_required
+def get_analytics(current_user):
+    # Coverage Distribution
+    coverage_data = db.session.query(
+        DistributionCenter.aid_center_name, 
+        func.count(Household.id)
+    ).join(Household, DistributionCenter.id == Household.center_id, isouter=True)\
+     .group_by(DistributionCenter.aid_center_name).all()
+
+    # 2. Vulnerability Distribution
+    tiers_data = db.session.query(
+        func.case(
+            (Household.vulnerability_score > 10, 'High'),
+            (Household.vulnerability_score >= 5, 'Medium'),
+            else_='Low'
+        ).label('tier'),
+        func.count(Household.id)
+    ).group_by('tier').all()
+
+    return jsonify({
+        "coverage": [{"center": c[0], "count": c[1]} for c in coverage_data],
+        "vulnerability_tiers": [{"tier": t[0], "count": t[1]} for t in tiers_data]
+    }), 200

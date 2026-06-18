@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app
-from app.models import TokenBlocklist, Users  # Removed Officers
+from app.models import TokenBlocklist, Users  
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
@@ -166,7 +166,7 @@ def login():
         'message': 'Login successful',
         'access_token': access_token,
         'refresh_token': refresh_token,
-        'require_password_change': must_change_password,
+        'require_password_change': user.requires_password_change if user.role == 'aid-worker' else False,
         'user_type': user_type,
         'role': user_role
     })

@@ -1,11 +1,11 @@
 from flask import Blueprint, jsonify,request
-from app.models import AidTokens, DistributionSession, Users, UssdSession
+from app.models import AidTokens, DistributionCenter, Users, UssdSession
 from app import db
-from app.tokens import generate_aid_token, token_required 
+from app.tokens import generate_aid_token, profile_required, token_required 
 from werkzeug.security import check_password_hash
 from flask import current_app
 from app.routes.auth_routes import login,register
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.Admin.audit import log_action
 
 
@@ -130,18 +130,18 @@ def ussd_callback():
 
             #Find active didtribution session
                
-                active_session = DistributionSession.query.filter_by(is_active=True).first()
+                active_center = DistributionCenter.query.filter_by(is_active=True).first()
 
-                if not active_session:
-                    return "END No active distribution session.", 200
+                if not active_center:
+                    return "END No active distribution Center.", 200
 
-                if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
-                    return "END No active distribution session.", 200
+                if active_center.expiry_time and active_center.expiry_time < datetime.utcnow():
+                    return "END No active distribution Center.", 200
 
                 # Check if user already has token in THIS distribution session
                 existing_token = AidTokens.query.filter_by(
                     user_id=user.id,
-                    distribution_session_id=active_session.id
+                    distribution_center_id=active_center.id
                 ).filter(AidTokens.token_status.in_(["active", "inactive"])).first()
 
                 if existing_token:
@@ -161,7 +161,7 @@ def ussd_callback():
                     aid_token=token,
                     token_status='active',
                     token_issued_at=datetime.utcnow(),
-                    distribution_session_id=active_session.id
+                    distribution_center_id=active_center.id
                 )
                 db.session.add(new_token)
                 db.session.commit()
@@ -172,12 +172,12 @@ def ussd_callback():
                 response = "END Token sent via SMS."
 
             elif choice == "2":
-                active_session = DistributionSession.query.filter_by(is_active=True).first()
+                active_center = DistributionCenter.query.filter_by(is_active=True).first()
 
-                if not active_session:
-                    return "END No active distribution session.", 200
+                if not active_center:
+                    return "END No active distribution Center.", 200
 
-                if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
+                if active_center.expiry_time and active_center.expiry_time < datetime.utcnow():
                     # token.token_status = 'expired'
                     # db.session.commit()
                     return "END Distribution session expired. Your token is now expired.", 200
@@ -186,7 +186,7 @@ def ussd_callback():
 
                 token = AidTokens.query.filter_by(
                     user_id=user.id,
-                    distribution_session_id=active_session.id
+                    distribution_center_id=active_center.id
                 ).first()
 
                 if not token:
@@ -224,25 +224,31 @@ def ussd_callback():
    
 @user_bp.route('/request-token', methods=['POST', 'GET'])
 @token_required
+@profile_required
 def request_smartphone_token(current_user_id):
     # Verify User (Smartphone users)
     user = Users.query.get(current_user_id)
     if not user:
         return jsonify({"error": "Beneficiary not found"}), 404
 
-    # Find the active distribution session
-    active_session = DistributionSession.query.filter_by(is_active=True).first()
+    #Fraud check
+    if check_for_fraud(current_user_id):
+        log_action(current_user_id, "Fraudulent Activity Detected", f"Beneficiary {user.first_name} {user.second_name} attempted to request a token within 24 hours of the last request.")
+        return jsonify({"error": "Fraudulent activity detected."}), 400
 
-    if not active_session:
+    # Find the active distribution session
+    active_center = DistributionCenter.query.filter_by(is_active=True).first()
+
+    if not active_center:
         return jsonify({"error": "No active distribution session at the moment."}), 404
 
-    if active_session.expiry_time and active_session.expiry_time < datetime.utcnow():
+    if active_center.expiry_time and active_center.expiry_time < datetime.utcnow():
         return jsonify({"error": "The active distribution session has expired."}), 400
 
     # Check if user already has a token for the session
     existing_token = AidTokens.query.filter_by(
         user_id=user.id,
-        distribution_session_id=active_session.id
+        distribution_center_id=active_center.id
     ).first()
 
     if existing_token:
@@ -252,7 +258,7 @@ def request_smartphone_token(current_user_id):
                 "message": "Retrieved existing active token.",
                 "aid_token": existing_token.aid_token,
                 "token_status": existing_token.token_status,
-                "session_name": active_session.aid_center_name
+                "center_name": active_center.aid_center_name
             }), 200
             
         elif existing_token.token_status == "used":
@@ -269,7 +275,7 @@ def request_smartphone_token(current_user_id):
         aid_token=token_string,
         token_status='active',
         token_issued_at=datetime.utcnow(),
-        distribution_session_id=active_session.id
+        distribution_center_id=active_center.id
     )
     db.session.add(new_token)
     db.session.commit()
@@ -282,7 +288,7 @@ def request_smartphone_token(current_user_id):
         "message": "Token generated successfully",
         "aid_token": token_string,
         "token_status": "active",
-        "session_name": active_session.aid_center_name
+        "center_name": active_center.aid_center_name
     }), 201
 
 @user_bp.route('/token-history', methods=['GET'])
@@ -293,18 +299,30 @@ def get_token_history(current_user_id):
 
     history_data = []
     for token in tokens:
-        # Check the distribution session to get the actual center name
-        session = DistributionSession.query.get(token.distribution_session_id) if token.distribution_session_id else None
+        # Check the distribution center to get the actual center name
+        session = DistributionCenter.query.get(token.distribution_center_id) if token.distribution_center_id else None
         
         history_data.append({
             "id": token.id,
             "aid_token": token.aid_token,
             "token_status": token.token_status,
             "token_issued_at": token.token_issued_at.strftime('%Y-%m-%d %H:%M:%S') if token.token_issued_at else None,
-            "session_name": session.aid_center_name if session else "General Distribution"
+            "center_name": session.aid_center_name if session else "General Distribution"
         })
 
     return jsonify({
         "message": "Token history retrieved successfully",
         "history": history_data
-    }), 200  
+    }), 200   
+
+
+def check_for_fraud(user_id):
+    #find the most recent token issued to the user
+    last_token = AidTokens.query.filter_by(user_id=user_id)\
+        .order_by(AidTokens.token_issued_at.desc()).first()
+    
+    if last_token and last_token.token_issued_at:
+        # Check if less than 24 hours have passed
+        if datetime.utcnow() - last_token.token_issued_at < timedelta(hours=24):
+            return True 
+    return False
