@@ -61,7 +61,7 @@ def create_app():
     init_admin(app)
 
 # Create tables if they don't exist
-    # with app.app_context():
-    #     db.create_all()
+    with app.app_context():
+        db.create_all()
 
     return app
