@@ -1,7 +1,6 @@
-from flask import Blueprint, current_app, request, jsonify
-import jwt
+from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from app.models import DistributionCenter, Household, Users  # Removed Officers
+from app.models import DistributionCenter, Household, Users  
 from app import db
 from app.tokens import token_required
 
