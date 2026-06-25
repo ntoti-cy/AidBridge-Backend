@@ -166,7 +166,7 @@ def login():
         'message': 'Login successful',
         'access_token': access_token,
         'refresh_token': refresh_token,
-        'require_password_change': user.requires_password_change if user.role == 'aid-worker' else False,
+        'require_password_change': user.requires_password_change if user.role == 'aid_worker' else False,
         'user_type': user_type,
         'role': user_role
     })

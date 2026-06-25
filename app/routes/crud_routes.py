@@ -25,7 +25,7 @@ def change_password(current_user_id):
 
     
     is_forced_change = (
-        user.role == "aid-worker" and user.requires_password_change
+        user.role == "aid_worker" and user.requires_password_change
     )
 
     if not is_forced_change:
@@ -40,7 +40,7 @@ def change_password(current_user_id):
 
     user.password = generate_password_hash(new_password)
 
-    if user.role == "aid-worker" :
+    if user.role == "aid_worker" :
         user.requires_password_change = False
 
     db.session.commit()

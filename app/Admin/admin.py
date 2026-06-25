@@ -1,6 +1,8 @@
+import os
+
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView 
-from flask import  abort
+from flask import  abort, request
 from werkzeug.security import check_password_hash, generate_password_hash
 import jwt
 from app.models import Users, AidTokens, AuditLog
@@ -10,31 +12,42 @@ from app import db
 # Secure Base View (JWT Protected)
 class SecureModelView(ModelView):
 
-    def is_accessible(self):
-        return True
-        # token = request.headers.get("Authorization")
+    def admin_user():
+        auth_header = request.headers.get('Authorization')
+        token=None 
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
 
-        # if not token:
-        #     return False
+        if not token:
+            return None
 
-        # try:
-        #     # Remove "Bearer "
-        #     token = token.split(" ")[1]
+        try:
+            secret =os.getenv('SECRET_KEY')
+            if not secret: raise RuntimeError("SECRET_KEY not set in environment variables.")
+            decoded = jwt.decode(token, secret, algorithms=["HS256"])   
 
-        #     decoded = jwt.decode(token, "This is the secret-key", algorithms=["HS256"])
+            user_id = decoded.get('user_id')
+            role = decoded.get('role')
+            if role != 'admin':
+                return None
 
-        #     # Only allow admins
-        #     return decoded.get("role") == "admin"
+            user =db.session.get(Users, user_id)
+            if not user or user.role != 'admin':
+                return None 
 
-        # except Exception:
-        #     return False
-
-    def inaccessible_callback(self, name, **kwargs):
-        return abort(403)
+            return user
+        except Exception :
+            return None
+            
 
 
 #  Users
 class UserManagementView(SecureModelView):
+    def is_accessible(self):
+        return self.admin_user() is not None
+
+    def inaccessible_callback(self, name, **kwargs):
+        return abort(403)  # Forbidden access if not admin
     can_create = True
     can_edit = True
     can_delete = True

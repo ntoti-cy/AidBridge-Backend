@@ -315,14 +315,16 @@ def get_token_history(current_user_id):
         "history": history_data
     }), 200   
 
-
-def check_for_fraud(user_id):
+#Fraud Check
+def check_for_fraud(user_id, active_center_id):
     #find the most recent token issued to the user
-    last_token = AidTokens.query.filter_by(user_id=user_id)\
-        .order_by(AidTokens.token_issued_at.desc()).first()
+    last_token = AidTokens.query.filter_by(user_id=user_id, distribution_center_id=active_center_id)\
+        .filter(AidTokens.token_status.in_(["active", "used"])).first()  # Get the most recent token
+    return last_token
+        
     
-    if last_token and last_token.token_issued_at:
-        # Check if less than 24 hours have passed
-        if datetime.utcnow() - last_token.token_issued_at < timedelta(hours=24):
-            return True 
-    return False
+    # if last_token and last_token.token_issued_at:
+    #     # Check if less than 24 hours have passed
+    #     if datetime.utcnow() - last_token.token_issued_at < timedelta(hours=24):
+    #         return True 
+    # return False
