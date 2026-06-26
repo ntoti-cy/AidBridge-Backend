@@ -10,7 +10,6 @@ from flask_cors import CORS
 db = SQLAlchemy()
 migrate = Migrate()
 
-
 def create_app():
     app = Flask(__name__)
 
@@ -61,7 +60,7 @@ def create_app():
     init_admin(app)
 
 # Create tables if they don't exist
-    with app.app_context():
-        db.create_all()
+    # with app.app_context():
+    #     db.create_all()
 
     return app
