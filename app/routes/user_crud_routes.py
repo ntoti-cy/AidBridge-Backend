@@ -5,7 +5,7 @@ from app.tokens import generate_aid_token, profile_required, token_required
 from werkzeug.security import check_password_hash
 from flask import current_app
 from app.routes.auth_routes import login,register
-from datetime import datetime, timedelta
+from datetime import datetime
 from app.Admin.audit import log_action
 
 
@@ -142,14 +142,14 @@ def ussd_callback():
                 existing_token = AidTokens.query.filter_by(
                     user_id=user.id,
                     distribution_center_id=active_center.id
-                ).filter(AidTokens.token_status.in_(["active", "inactive"])).first()
+                ).order_by(AidTokens.token_issued_at.desc()).first()
 
                 if existing_token:
                     if existing_token.token_status == "active":
                         return "END You already have an active token for this session.", 200
-                    if existing_token.token_status == "used":
+                    elif existing_token.token_status == "used":
                         return "END You have already used your token for this session.", 200
-                    if existing_token.token_status == "expired":
+                    elif existing_token.token_status == "expired":
                         return "END Distribution Session Has Ended.", 200
                 
 
@@ -187,7 +187,7 @@ def ussd_callback():
                 token = AidTokens.query.filter_by(
                     user_id=user.id,
                     distribution_center_id=active_center.id
-                ).first()
+                ).order_by(AidTokens.token_issued_at.desc()).first()
 
                 if not token:
                     return "END You have not requested a token.", 200
@@ -231,14 +231,7 @@ def request_smartphone_token(current_user_id):
     if not user:
         return jsonify({"error": "Beneficiary not found"}), 404
 
-    #Fraud check
-    if check_for_fraud(current_user_id):
-        log_action(current_user_id, "Fraudulent Activity Detected", f"Beneficiary {user.first_name} {user.second_name} attempted to request a token within 24 hours of the last request.")
-        return jsonify({"error": "Fraudulent activity detected."}), 400
-
-    # Find the active distribution session
     active_center = DistributionCenter.query.filter_by(is_active=True).first()
-
     if not active_center:
         return jsonify({"error": "No active distribution session at the moment."}), 404
 
@@ -249,7 +242,8 @@ def request_smartphone_token(current_user_id):
     existing_token = AidTokens.query.filter_by(
         user_id=user.id,
         distribution_center_id=active_center.id
-    ).first()
+    ).order_by(AidTokens.token_issued_at.desc()).first()
+     
 
     if existing_token:
         if existing_token.token_status == "active":
@@ -315,16 +309,4 @@ def get_token_history(current_user_id):
         "history": history_data
     }), 200   
 
-#Fraud Check
-def check_for_fraud(user_id, active_center_id):
-    #find the most recent token issued to the user
-    last_token = AidTokens.query.filter_by(user_id=user_id, distribution_center_id=active_center_id)\
-        .filter(AidTokens.token_status.in_(["active", "used"])).first()  # Get the most recent token
-    return last_token
-        
-    
-    # if last_token and last_token.token_issued_at:
-    #     # Check if less than 24 hours have passed
-    #     if datetime.utcnow() - last_token.token_issued_at < timedelta(hours=24):
-    #         return True 
-    # return False
+

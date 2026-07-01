@@ -60,6 +60,11 @@ def get_my_profile(current_user_id):
     if not user:
         return jsonify({'error': 'User profile not found'}), 404
 
+    center =None
+
+    if user.assigned_center_id:
+        center = DistributionCenter.query.get(user.assigned_center_id)
+
     return jsonify({
         'first_name': user.first_name,
         'second_name': user.second_name,
@@ -67,7 +72,10 @@ def get_my_profile(current_user_id):
         'contact': user.contact,
         'email': user.email,
         'role': user.role,
-        'requires_password_change': user.requires_password_change
+        'requires_password_change': user.requires_password_change,
+        "assigned_center_id": user.assigned_center_id,
+        "assigned_center_name":center.aid_center_name if center else None
+
     }), 200
 
 
