@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app
-from app.models import TokenBlocklist, Users  
+from app.models import Household, TokenBlocklist, Users  
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
@@ -162,13 +162,19 @@ def login():
         'exp': datetime.datetime.utcnow() + datetime.timedelta(days=10)
     }, current_app.config['SECRET_KEY'], algorithm="HS256")
 
+    household =Household.query.filter_by(user_id=user.id).first()
+    is_profile_complete = False
+    if household:
+        is_profile_complete = household.is_profile_complete
+
     return jsonify({
         'message': 'Login successful',
         'access_token': access_token,
         'refresh_token': refresh_token,
         'require_password_change': user.requires_password_change if user.role == 'aid_worker' else False,
         'user_type': user_type,
-        'role': user_role
+        'role': user_role,
+        'is_profile_complete': is_profile_complete
     })
 
 # LOGOUT 
