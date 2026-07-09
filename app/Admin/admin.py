@@ -1,173 +1,240 @@
-import os
-
+from flask import redirect, url_for, session
 from flask_admin import Admin, AdminIndexView, expose
-from flask_admin.contrib.sqla import ModelView 
-from flask import  abort, request
-from werkzeug.security import check_password_hash, generate_password_hash
-import jwt
-from app.models import Users, AidTokens, AuditLog
+from flask_admin.contrib.sqla import ModelView
+from werkzeug.security import generate_password_hash
 from app import db
+from app.models import Users, Household, DistributionCenter, AidTokens, AuditLog
+from app.Admin.security import get_current_admin
+from app.Admin.dashboard import get_dashboard_data
+from app.Admin.audit import log_action
 
 
-# Secure Base View (JWT Protected)
-class SecureModelView(ModelView):
+class SecureAdminIndexView(AdminIndexView):
 
-    def admin_user():
-        auth_header = request.headers.get('Authorization')
-        token=None 
-        if auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-
-        if not token:
-            return None
-
-        try:
-            secret =os.getenv('SECRET_KEY')
-            if not secret: raise RuntimeError("SECRET_KEY not set in environment variables.")
-            decoded = jwt.decode(token, secret, algorithms=["HS256"])   
-
-            user_id = decoded.get('user_id')
-            role = decoded.get('role')
-            if role != 'admin':
-                return None
-
-            user =db.session.get(Users, user_id)
-            if not user or user.role != 'admin':
-                return None 
-
-            return user
-        except Exception :
-            return None
-            
-
-
-#  Users
-class UserManagementView(SecureModelView):
     def is_accessible(self):
-        return self.admin_user() is not None
+        return get_current_admin() is not None
 
     def inaccessible_callback(self, name, **kwargs):
-        return abort(403)  # Forbidden access if not admin
-    can_create = True
-    can_edit = True
-    can_delete = True
+        return redirect(url_for("admin_auth.login"))
 
-    column_searchable_list = ['first_name', 'national_id', 'contact', 'email']
-    column_filters = ['role', 'user_type']
-
-    column_exclude_list = ['password', 'current_jti']
+    @expose("/")
+    def index(self):
+        dashboard = get_dashboard_data()
+        return self.render("admin/dashboard_home.html", **dashboard)
 
 
-    # INTERCEPT AND VALIDATE BEFORE SAVING TO DB
-    def on_model_change(self, form, model, is_created):
-        
-        if model.first_name and not str(model.first_name).replace(" ", "").isalpha():
-            raise ValueError("First name must contain only letters.")
+# Beneficiaries
+class BeneficiaryModelView(ModelView):
 
-        if model.second_name and not str(model.second_name).replace(" ", "").isalpha():
-            raise ValueError("Second name must contain only letters.")
-
-        if model.national_id and not str(model.national_id).isdigit():
-            raise ValueError("National ID must contain only numbers.")
-
-        if model.contact:
-            contact_str = str(model.contact) # Convert to string safely
-            if not contact_str.isdigit():
-                raise ValueError("Contact must contain only numbers.")
-            elif len(contact_str) < 10:
-                raise ValueError("Contact number must be at least 10 digits long.")
-
-        if model.email:
-            if '@' not in model.email or '.' not in str(model.email):
-                raise ValueError("Email must be a valid email address.")
-            
-        if form.password.data:
-            password_str = str(form.password.data)
-            if len(password_str) < 6:
-                raise ValueError("Password must be at least 6 characters long.")
-                
-            if not str(model.password).startswith('scrypt') and not str(model.password).startswith('pbkdf2'):
-                model.password = generate_password_hash(password_str)
-
-
-
-# This looks up the user's name based on their ID
-def format_user_name(view, context, model, name):
-    if not model.user_id:
-        return "System / None"
-    
-    # Query the database for this specific user
-    user = Users.query.get(model.user_id)
-    if user:
-        return f"{user.first_name} {user.second_name} (User ID: {user.id})"
-    return f"Deleted User (ID: {model.user_id})"
-
-#  Tokens
-class TokenManagementView(SecureModelView):
     can_create = False
-    can_edit = False
-    can_delete = True
+    can_edit = True
+    can_delete = False
+    
 
-    column_list= ['id', 'user_id','aid_token', 'token_status', 'token_issued_at']
-   
-# This uses the custom formatter to show the user's name instead of just their ID
-    column_formatters = {'user_id': format_user_name}
+    form_excluded_columns = [
+        "current_jti",
+    ]
 
-    column_searchable_list = ['aid_token', 'token_status']
-    column_filters = ['token_status']
+    def get_query(self):
+        return self.session.query(self.model).filter_by(role="beneficiary")
+
+    def get_count_query(self):
+        return self.session.query(db.func.count(self.model.id)).filter_by(
+            role="beneficiary"
+        )
 
 
-#  Audit Logs 
-class SecureAuditLogView(SecureModelView):
+# Aid Workers
+class AidWorkerModelView(ModelView):
+    can_create = True
+    can_edit =True
+    can_delete = False
+
+    form_columns = [
+        "first_name",
+        "second_name",
+        "national_id",
+        "contact",
+        "email",
+        "password",
+        "assigned_center",
+        "is_active",
+    ]
+
+    column_labels = {
+        "assigned_center": "Assigned Distribution Center",
+        "is_active": "Active Status",
+    }
+  
+
+    def get_query(self):
+        return self.session.query(self.model).filter(
+            self.model.role.in_(["aid_worker", "admin"])
+        )
+
+    def get_count_query(self):
+        return self.session.query(db.func.count(self.model.id)).filter(
+            self.model.role.in_(["aid_worker", "admin"])
+        )
+
+    def on_model_change(self, form, model, is_created):
+
+        # Ensure role remains aid_worker
+        model.role = "aid_worker"
+
+        model.user_type = "smartphone"
+
+        if form.assigned_center.data:
+            model.assigned_center = form.assigned_center.data
+        else:
+            model.assigned_center = None
+
+        # Hash password only if it is not already hashed
+        if model.password and not model.password.startswith("pbkdf2:"):
+            model.password = generate_password_hash(model.password)
+
+        if is_created:
+
+            log_action(
+                session.get("admin_id"),
+                "Aid Worker Created",
+                f"{model.first_name} {model.second_name} was created.",
+            )
+
+        else:
+
+            log_action(
+                session.get("admin_id"),
+                "Aid Worker Updated",
+                f"{model.first_name} {model.second_name} was updated.",
+            )
+
+    def on_model_delete(self, model):
+
+        log_action(
+            session.get("admin_id"),
+            "Aid Worker Deleted",
+            f"{model.first_name} {model.second_name} was deleted.",
+        )
+
+
+# Distribution Centers
+class DistributionCenterModelView(ModelView):
+    can_create=True
+    can_edit=True
+    can_delete=False
+
+    def on_model_change(self, form, model, is_created):
+
+        if is_created:
+
+            log_action(
+                session.get("admin_id"),
+                "Distribution Center Created",
+                f"{model.aid_center_name} was created.",
+            )
+
+        else:
+
+            log_action(
+                session.get("admin_id"),
+                "Distribution Center Updated",
+                f"{model.aid_center_name} was updated.",
+            )
+
+    def on_model_delete(self, model):
+
+        log_action(
+            session.get("admin_id"),
+            "Distribution Center Deleted",
+            f"{model.aid_center_name} was deleted.",
+        )
+
+
+# Aid Tokens
+class AidTokenModelView(ModelView):
     can_create = False
     can_edit = False
     can_delete = False
 
-    column_list = ['id', 'user_id', 'action', 'details', 'timestamp']
-    column_formatters = {'user_id': format_user_name}
-    column_searchable_list = ['action', 'details']
-    column_filters = ['action', 'timestamp']
+
+# Households
+class HouseholdModelView(ModelView):
+    can_create = False
+    can_edit = True
+    can_delete = False
 
 
-# 1. How the Dashboard looks like 
-class DashboardHomeView(AdminIndexView):
-    # Temporarily bypassing security just like the tables so you can see it
-    def is_accessible(self):
-        return True 
+# Audit Logs
+class AuditLogModelView(ModelView):
 
-    @expose('/')
-    def index(self):
-        # Calculate some impressive statistics for the examiners to see
-        total_beneficiaries = Users.query.filter_by(user_type='smartphone').count() + Users.query.filter_by(user_type='ussd').count()
-        total_officers = Users.query.filter_by(role='officer').count()
-        
-        # If AidTokens has a status, you can count them. (Wrap in try/except just in case the table is empty)
-        try:
-            active_tokens = AidTokens.query.filter_by(token_status='active').count()
-        except:
-            active_tokens = 0
-
-        # Pass these numbers to our HTML template
-        return self.render(
-            'admin/dashboard_home.html', 
-            total_beneficiaries=total_beneficiaries,
-            total_officers=total_officers,
-            active_tokens=active_tokens
-        )    
+    can_create = False
+    can_edit = False
+    can_delete = False
 
 
-#  Init Function (Updated for latest Flask-Admin)
+# Initialize Admin
 def init_admin(app):
-   # Initialize Admin WITHOUT template_mode or custom templates
-    #admin = Admin(app, name="AidBridge HQ", url="/admin")  # ✅ simple default
+
     admin = Admin(
-        app, 
-        name="AidBridge HQ", 
-        url="/admin", 
-        index_view=DashboardHomeView(name='Dashboard Home') # <--- This is the magic line
+        app,
+        name="AidBridge HQ",
+        url="/admin",
+        index_view=SecureAdminIndexView(name="Dashboard"),
     )
 
-    # Add your views
-    admin.add_view(UserManagementView(Users, db.session, name="Manage Users"))
-    admin.add_view(TokenManagementView(AidTokens, db.session, name="Aid Tokens"))
-    admin.add_view(SecureAuditLogView(AuditLog, db.session, name="Audit Logs"))
+    admin.add_view(
+        BeneficiaryModelView(
+            Users,
+            db.session,
+            name="Beneficiaries",
+            endpoint="beneficiaries",
+            category="Users",
+        )
+    )
+
+    admin.add_view(
+        AidWorkerModelView(
+            Users,
+            db.session,
+            name="Aid Workers",
+            endpoint="aid_workers",
+            category="Users",
+        )
+    )
+
+    admin.add_view(
+        DistributionCenterModelView(
+            DistributionCenter,
+            db.session,
+            name="Distribution Centers",
+            category="Distribution",
+        )
+    )
+
+    admin.add_view(
+        AidTokenModelView(
+            AidTokens,
+            db.session,
+            name="Aid Tokens",
+            category="Distribution",
+        )
+    )
+
+    admin.add_view(
+        HouseholdModelView(
+            Household,
+            db.session,
+            name="Households",
+            category="Distribution",
+        )
+    )
+
+    admin.add_view(
+        AuditLogModelView(
+            AuditLog,
+            db.session,
+            name="Audit Logs",
+            category="Monitoring",
+        )
+    )

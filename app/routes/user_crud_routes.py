@@ -1,46 +1,46 @@
-from flask import Blueprint, jsonify,request
+from flask import Blueprint, jsonify, request
 from app.models import AidTokens, DistributionCenter, Users, UssdSession
 from app import db
-from app.tokens import generate_aid_token, profile_required, token_required 
+from app.tokens import generate_aid_token, profile_required, token_required
 from werkzeug.security import check_password_hash
 from flask import current_app
-from app.routes.auth_routes import login,register
+from app.routes.auth_routes import login, register
 from datetime import datetime
 from app.Admin.audit import log_action
 
+user_bp = Blueprint(
+    "user_bp",
+    __name__,
+)
 
-user_bp = Blueprint('user_bp',__name__,)
 
-#USSD
-@user_bp.route('/callback', methods=['POST'])
+# USSD
+@user_bp.route("/callback", methods=["POST"])
 def ussd_callback():
     session_id = request.form.get("sessionId")
-    contact = request.form.get("phoneNumber")  
+    contact = request.form.get("phoneNumber")
     text = request.form.get("text")
 
-    response = ""   #  initialize response
+    response = ""  #  initialize response
 
-
-
-   # HANDLE GLOBAL BACK OPTION
+    # HANDLE GLOBAL BACK OPTION
     if text:
-     parts = text.split("*")
-     if parts[-1] == "0":  
-         if len(parts) > 1:
-            parts = parts[:-2]
-         else:
-            parts = []
+        parts = text.split("*")
+        if parts[-1] == "0":
+            if len(parts) > 1:
+                parts = parts[:-2]
+            else:
+                parts = []
 
-         text = "*".join(parts) # if last input is 0
-        
+            text = "*".join(parts)  # if last input is 0
+
     parts = text.split("*") if text else []
-    
 
     # MAIN MENU
     if text == "":
         response = "CON Welcome to Aidbridge Aid Access System\n"
         response += "Bridging Aid to the last Mile\n"
-        response += "1.Register\n" 
+        response += "1.Register\n"
         response += "2.Login\n"
         response += "3.Exit"
 
@@ -71,9 +71,7 @@ def ussd_callback():
 
             # Call your existing register endpoint
             with current_app.test_request_context(
-                '/register',
-                method='POST',
-                json=data
+                "/register", method="POST", json=data
             ):
                 register_response = register()
                 if register_response[1] != 201:
@@ -89,7 +87,6 @@ def ussd_callback():
         elif len(parts) == 2:  # User submitted password
             password = parts[1]
 
-            
             user = Users.query.filter_by(contact=contact).first()
 
             if not user or not check_password_hash(user.password, password):
@@ -98,10 +95,12 @@ def ussd_callback():
             # Save or update session in DB
             session = UssdSession.query.filter_by(session_id=session_id).first()
             if not session:
-                session = UssdSession(session_id=session_id,
-                                       user_id=user.id, 
-                                       authenticated=True,
-                                       last_active=datetime.utcnow())
+                session = UssdSession(
+                    session_id=session_id,
+                    user_id=user.id,
+                    authenticated=True,
+                    last_active=datetime.utcnow(),
+                )
                 db.session.add(session)
             else:
                 session.user_id = user.id
@@ -127,75 +126,96 @@ def ussd_callback():
 
             if choice == "1":
 
+                # Find active didtribution session
 
-            #Find active didtribution session
-               
-                active_center = DistributionCenter.query.filter_by(is_active=True).first()
+                active_center = DistributionCenter.query.filter_by(
+                    is_active=True
+                ).first()
 
                 if not active_center:
                     return "END No active distribution Center.", 200
 
-                if active_center.expiry_time and active_center.expiry_time < datetime.utcnow():
+                if (
+                    active_center.expiry_time
+                    and active_center.expiry_time < datetime.utcnow()
+                ):
                     return "END No active distribution Center.", 200
 
                 # Check if user already has token in THIS distribution session
-                existing_token = AidTokens.query.filter_by(
-                    user_id=user.id,
-                    distribution_center_id=active_center.id
-                ).order_by(AidTokens.token_issued_at.desc()).first()
+                existing_token = (
+                    AidTokens.query.filter_by(
+                        user_id=user.id, distribution_center_id=active_center.id
+                    )
+                    .order_by(AidTokens.token_issued_at.desc())
+                    .first()
+                )
 
                 if existing_token:
                     if existing_token.token_status == "active":
-                        return "END You already have an active token for this session.", 200
+                        return (
+                            "END You already have an active token for this session.",
+                            200,
+                        )
                     elif existing_token.token_status == "used":
-                        return "END You have already used your token for this session.", 200
+                        return (
+                            "END You have already used your token for this session.",
+                            200,
+                        )
                     elif existing_token.token_status == "expired":
                         return "END Distribution Session Has Ended.", 200
-                
 
-                              
                 token = generate_aid_token(user)
 
-                new_token = AidTokens (
+                new_token = AidTokens(
                     user_id=user.id,
                     aid_token=token,
-                    token_status='active',
+                    token_status="active",
                     token_issued_at=datetime.utcnow(),
-                    distribution_center_id=active_center.id
+                    distribution_center_id=active_center.id,
                 )
                 db.session.add(new_token)
                 db.session.commit()
-# Log token issuance in AuditLog
-                log_action(user.id, "Token Issued", f"Aid token {token} issued to {user.first_name} {user.second_name}")
+                # Log token issuance in AuditLog
+                log_action(
+                    user.id,
+                    "Token Issued",
+                    f"Aid token {token} issued to {user.first_name} {user.second_name}",
+                )
 
                 print(f"Send SMS to {user.contact}: Your Aid Token is {token}")
                 response = "END Token sent via SMS."
 
             elif choice == "2":
-                active_center = DistributionCenter.query.filter_by(is_active=True).first()
+                active_center = DistributionCenter.query.filter_by(
+                    is_active=True
+                ).first()
 
                 if not active_center:
                     return "END No active distribution Center.", 200
 
-                if active_center.expiry_time and active_center.expiry_time < datetime.utcnow():
+                if (
+                    active_center.expiry_time
+                    and active_center.expiry_time < datetime.utcnow()
+                ):
                     # token.token_status = 'expired'
                     # db.session.commit()
-                    return "END Distribution session expired. Your token is now expired.", 200
+                    return (
+                        "END Distribution session expired. Your token is now expired.",
+                        200,
+                    )
 
-                
-
-                token = AidTokens.query.filter_by(
-                    user_id=user.id,
-                    distribution_center_id=active_center.id
-                ).order_by(AidTokens.token_issued_at.desc()).first()
+                token = (
+                    AidTokens.query.filter_by(
+                        user_id=user.id, distribution_center_id=active_center.id
+                    )
+                    .order_by(AidTokens.token_issued_at.desc())
+                    .first()
+                )
 
                 if not token:
                     return "END You have not requested a token.", 200
 
                 response = f"END Token: {token.aid_token}\nStatus: {token.token_status}"
-
-                
-
 
             elif choice == "9":
                 response = "END Thank you for trusting AidBridge."
@@ -218,11 +238,10 @@ def ussd_callback():
     else:
         response = "END Invalid option."
 
-    return response, 200    
-   
-   
-   
-@user_bp.route('/request-token', methods=['POST', 'GET'])
+    return response, 200
+
+
+@user_bp.route("/request-token", methods=["POST", "GET"])
 @token_required
 @profile_required
 def request_smartphone_token(current_user_id):
@@ -239,25 +258,37 @@ def request_smartphone_token(current_user_id):
         return jsonify({"error": "The active distribution session has expired."}), 400
 
     # Check if user already has a token for the session
-    existing_token = AidTokens.query.filter_by(
-        user_id=user.id,
-        distribution_center_id=active_center.id
-    ).order_by(AidTokens.token_issued_at.desc()).first()
-     
+    existing_token = (
+        AidTokens.query.filter_by(
+            user_id=user.id, distribution_center_id=active_center.id
+        )
+        .order_by(AidTokens.token_issued_at.desc())
+        .first()
+    )
 
     if existing_token:
         if existing_token.token_status == "active":
             # Return the existing token so Flutter can redraw the QR code
-            return jsonify({
-                "message": "Retrieved existing active token.",
-                "aid_token": existing_token.aid_token,
-                "token_status": existing_token.token_status,
-                "center_name": active_center.aid_center_name
-            }), 200
-            
+            return (
+                jsonify(
+                    {
+                        "message": "Retrieved existing active token.",
+                        "aid_token": existing_token.aid_token,
+                        "token_status": existing_token.token_status,
+                        "center_name": active_center.aid_center_name,
+                    }
+                ),
+                200,
+            )
+
         elif existing_token.token_status == "used":
-            return jsonify({"error": "You have already received your aid for this session."}), 400
-            
+            return (
+                jsonify(
+                    {"error": "You have already received your aid for this session."}
+                ),
+                400,
+            )
+
         elif existing_token.token_status == "expired":
             return jsonify({"error": "Your token for this session has expired."}), 400
 
@@ -267,46 +298,72 @@ def request_smartphone_token(current_user_id):
     new_token = AidTokens(
         user_id=user.id,
         aid_token=token_string,
-        token_status='active',
+        token_status="active",
         token_issued_at=datetime.utcnow(),
-        distribution_center_id=active_center.id
+        distribution_center_id=active_center.id,
     )
     db.session.add(new_token)
     db.session.commit()
 
     # 5. Log the action
-    log_action(user.id, "Token Issued", f"Aid token {token_string} issued to smartphone user {user.first_name} {user.second_name}")
+    log_action(
+        user.id,
+        "Token Issued",
+        f"Aid token {token_string} issued to smartphone user {user.first_name} {user.second_name}",
+    )
 
     # 6. Send the token data back to Flutter
-    return jsonify({
-        "message": "Token generated successfully",
-        "aid_token": token_string,
-        "token_status": "active",
-        "center_name": active_center.aid_center_name
-    }), 201
+    return (
+        jsonify(
+            {
+                "message": "Token generated successfully",
+                "aid_token": token_string,
+                "token_status": "active",
+                "center_name": active_center.aid_center_name,
+            }
+        ),
+        201,
+    )
 
-@user_bp.route('/token-history', methods=['GET'])
+
+@user_bp.route("/token-history", methods=["GET"])
 @token_required
 def get_token_history(current_user_id):
     # Fetch all tokens requested by this beneficiary, sorted by newest first
-    tokens = AidTokens.query.filter_by(user_id=current_user_id).order_by(AidTokens.token_issued_at.desc()).all()
+    tokens = (
+        AidTokens.query.filter_by(user_id=current_user_id)
+        .order_by(AidTokens.token_issued_at.desc())
+        .all()
+    )
 
     history_data = []
     for token in tokens:
         # Check the distribution center to get the actual center name
-        session = DistributionCenter.query.get(token.distribution_center_id) if token.distribution_center_id else None
-        
-        history_data.append({
-            "id": token.id,
-            "aid_token": token.aid_token,
-            "token_status": token.token_status,
-            "token_issued_at": token.token_issued_at.strftime('%Y-%m-%d %H:%M:%S') if token.token_issued_at else None,
-            "center_name": session.aid_center_name if session else "General Distribution"
-        })
+        session = (
+            DistributionCenter.query.get(token.distribution_center_id)
+            if token.distribution_center_id
+            else None
+        )
 
-    return jsonify({
-        "message": "Token history retrieved successfully",
-        "history": history_data
-    }), 200   
+        history_data.append(
+            {
+                "id": token.id,
+                "aid_token": token.aid_token,
+                "token_status": token.token_status,
+                "token_issued_at": (
+                    token.token_issued_at.strftime("%Y-%m-%d %H:%M:%S")
+                    if token.token_issued_at
+                    else None
+                ),
+                "center_name": (
+                    session.aid_center_name if session else "General Distribution"
+                ),
+            }
+        )
 
-
+    return (
+        jsonify(
+            {"message": "Token history retrieved successfully", "history": history_data}
+        ),
+        200,
+    )

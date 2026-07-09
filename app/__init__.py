@@ -5,17 +5,15 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 
-
-
 db = SQLAlchemy()
 migrate = Migrate()
+
 
 def create_app():
     app = Flask(__name__)
 
-
     DATABASE_URL = os.getenv("DATABASE_URL")
-    if  not DATABASE_URL:
+    if not DATABASE_URL:
         DATABASE_URL = "postgresql://postgres:database@localhost/Aidbridge_db"
 
     if DATABASE_URL.startswith("postgres://"):
@@ -23,11 +21,14 @@ def create_app():
 
     # Configs
 
-    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY','#aidbridge_super_secret_key_2026')
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["SECRET_KEY"] = os.getenv(
+        "SECRET_KEY", "#aidbridge_super_secret_key_2026"
+    )
+    app.config["SESSION_PERMANENT"] = False
+    # app.config["SESSION_TYPE"] = "filesystem"
 
-       
     CORS(app)
 
     # Initialize extensions
@@ -40,26 +41,26 @@ def create_app():
     from app.routes.officer_crud_routes import officer_bp
     from app.routes.admin_crud_routes import admin_bp
     from app.routes.crud_routes import crud_bp
+    from app.Admin.auth import admin_auth
 
-    app.register_blueprint(auth_bp, url_prefix='/api/auth')
-    app.register_blueprint(user_bp, url_prefix='/api/user')
-    app.register_blueprint(officer_bp, url_prefix='/api/officer')
-    app.register_blueprint(admin_bp, url_prefix='/api/admin')
-    app.register_blueprint(crud_bp, url_prefix='/api/crud')
-
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(user_bp, url_prefix="/api/user")
+    app.register_blueprint(officer_bp, url_prefix="/api/officer")
+    app.register_blueprint(admin_bp, url_prefix="/api/admin")
+    app.register_blueprint(crud_bp, url_prefix="/api/crud")
+    app.register_blueprint(admin_auth)
 
     @app.route("/")
     def home():
         return "AidBridge API is running"
 
-
-
     # Initialize Admin Panel
-   
+
     from app.Admin.admin import init_admin
+
     init_admin(app)
 
-# Create tables if they don't exist
+    # Create tables if they don't exist
     # with app.app_context():
     #     db.create_all()
 
