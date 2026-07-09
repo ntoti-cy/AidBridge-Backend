@@ -48,7 +48,7 @@ class BeneficiaryModelView(ModelView):
 class AidWorkerModelView(ModelView):
     can_create = True
     can_edit =True
-    can_delete = False
+    can_delete =False
 
     form_columns = [
         "first_name",
@@ -83,6 +83,9 @@ class AidWorkerModelView(ModelView):
         model.role = "aid_worker"
 
         model.user_type = "smartphone"
+
+        if is_created:
+            model.requires_password_change = True
 
         if form.assigned_center.data:
             model.assigned_center = form.assigned_center.data

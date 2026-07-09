@@ -14,11 +14,15 @@ def create_app():
 
     DATABASE_URL = os.getenv("DATABASE_URL")
     if not DATABASE_URL:
-        DATABASE_URL = "postgresql://postgres:database@localhost/Aidbridge_db"
+        raise RuntimeError("DATABASE_URL environment variable is not set")
 
+    # Fix old postgres:// format
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+    # Neon requires SSL
+    if "neon.tech" in DATABASE_URL and "sslmode" not in DATABASE_URL:
+        DATABASE_URL += "?sslmode=require"
     # Configs
 
     app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
