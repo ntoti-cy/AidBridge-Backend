@@ -1,37 +1,17 @@
-from datetime import datetime
-from flask import Blueprint, current_app, jsonify, request
-from werkzeug.security import check_password_hash
+from flask import Blueprint, jsonify, request
+from app.models import AidTokens, DistributionCenter, Users, UssdSession
 from app import db
-from app.Admin.audit import log_action
-from app.models import AidTokens, DistributionCenter, Household, Users, UssdSession
-from app.routes.auth_routes import register
 from app.tokens import generate_aid_token, profile_required, token_required
+from werkzeug.security import check_password_hash
+from flask import current_app
+from app.routes.auth_routes import login, register
+from datetime import datetime
+from app.Admin.audit import log_action
 
 user_bp = Blueprint(
     "user_bp",
     __name__,
 )
-
-
-def get_user_active_center(user_id):
-    household = Household.query.filter_by(user_id=user_id).first()
-    if not household or not household.center_id:
-        return None, "Please complete your profile and select a distribution center."
-
-    center = DistributionCenter.query.get(household.center_id)
-    if not center:
-        return None, "Your selected distribution center is no longer available."
-
-    if not center.is_active:
-        return (
-            None,
-            "Aid collection is not currently open at your distribution center.",
-        )
-
-    if center.expiry_time and center.expiry_time < datetime.utcnow():
-        return None, "Aid collection has ended at your distribution center."
-
-    return center, None
 
 
 # USSD
@@ -41,8 +21,9 @@ def ussd_callback():
     contact = request.form.get("phoneNumber")
     text = request.form.get("text")
 
-    response = ""
+    response = ""  #  initialize response
 
+    # HANDLE GLOBAL BACK OPTION
     if text:
         parts = text.split("*")
         if parts[-1] == "0":
@@ -50,10 +31,12 @@ def ussd_callback():
                 parts = parts[:-2]
             else:
                 parts = []
-            text = "*".join(parts)
+
+            text = "*".join(parts)  # if last input is 0
 
     parts = text.split("*") if text else []
 
+    # MAIN MENU
     if text == "":
         response = "CON Welcome to Aidbridge Aid Access System\n"
         response += "Bridging Aid to the last Mile\n"
@@ -61,6 +44,7 @@ def ussd_callback():
         response += "2.Login\n"
         response += "3.Exit"
 
+    # REGISTER
     elif parts[0] == "1":
         if len(parts) == 1:
             response = "CON Enter First Name:"
@@ -73,22 +57,19 @@ def ussd_callback():
         elif len(parts) == 5:
             first_name = parts[1]
             second_name = parts[2]
-
-            try:
-                national_id = int(parts[3])
-            except ValueError:
-                return "END Invalid National ID.", 200
-
+            national_id = int(parts[3])
             password = parts[4]
 
+            # Build payload for /register including contact from USSD
             data = {
                 "first_name": first_name,
                 "second_name": second_name,
                 "national_id": national_id,
-                "contact": contact,
+                "contact": contact,  # ensure phone number is used
                 "password": password,
             }
 
+            # Call your existing register endpoint
             with current_app.test_request_context(
                 "/register", method="POST", json=data
             ):
@@ -98,17 +79,20 @@ def ussd_callback():
 
             response = "END Registration Successful. Please Login."
 
+    # LOGIN
     elif parts[0] == "2":
         if len(parts) == 1:
             response = "CON Enter Password:"
 
-        elif len(parts) == 2:
+        elif len(parts) == 2:  # User submitted password
             password = parts[1]
+
             user = Users.query.filter_by(contact=contact).first()
 
             if not user or not check_password_hash(user.password, password):
                 return "END Invalid Credentials.", 200
 
+            # Save or update session in DB
             session = UssdSession.query.filter_by(session_id=session_id).first()
             if not session:
                 session = UssdSession(
@@ -130,8 +114,10 @@ def ussd_callback():
             response += "0.Back\n"
             response += "9.Exit"
 
-        elif len(parts) == 3:
+        elif len(parts) == 3:  # User chose menu option
             choice = parts[2]
+
+            # Fetch session from DB
             session = UssdSession.query.filter_by(session_id=session_id).first()
             if not session or not session.authenticated:
                 return "END Session expired. Please login again.", 200
@@ -139,13 +125,26 @@ def ussd_callback():
             user = Users.query.get(session.user_id)
 
             if choice == "1":
-                center, err_msg = get_user_active_center(user.id)
-                if err_msg:
-                    return f"END {err_msg}", 200
 
+                # Find active didtribution session
+
+                active_center = DistributionCenter.query.filter_by(
+                    is_active=True
+                ).first()
+
+                if not active_center:
+                    return "END No active distribution Center.", 200
+
+                if (
+                    active_center.expiry_time
+                    and active_center.expiry_time < datetime.utcnow()
+                ):
+                    return "END No active distribution Center.", 200
+
+                # Check if user already has token in THIS distribution session
                 existing_token = (
                     AidTokens.query.filter_by(
-                        user_id=user.id, distribution_center_id=center.id
+                        user_id=user.id, distribution_center_id=active_center.id
                     )
                     .order_by(AidTokens.token_issued_at.desc())
                     .first()
@@ -154,72 +153,83 @@ def ussd_callback():
                 if existing_token:
                     if existing_token.token_status == "active":
                         return (
-                            "END You already have an active token for this center session.",
+                            "END You already have an active token for this session.",
                             200,
                         )
                     elif existing_token.token_status == "used":
                         return (
-                            "END You have already used your token for this center session.",
+                            "END You have already used your token for this session.",
                             200,
                         )
                     elif existing_token.token_status == "expired":
-                        return "END Distribution session has ended.", 200
+                        return "END Distribution Session Has Ended.", 200
 
-                try:
-                    token = generate_aid_token(user)
-                    new_token = AidTokens(
-                        user_id=user.id,
-                        aid_token=token,
-                        token_status="active",
-                        token_issued_at=datetime.utcnow(),
-                        distribution_center_id=center.id,
-                    )
-                    db.session.add(new_token)
-                    db.session.commit()
+                token = generate_aid_token(user)
 
-                    log_action(
-                        user.id,
-                        "Token Issued",
-                        f"Aid token {token} issued to {user.first_name} {user.second_name}",
-                    )
+                new_token = AidTokens(
+                    user_id=user.id,
+                    aid_token=token,
+                    token_status="active",
+                    token_issued_at=datetime.utcnow(),
+                    distribution_center_id=active_center.id,
+                )
+                db.session.add(new_token)
+                db.session.commit()
+                # Log token issuance in AuditLog
+                log_action(
+                    user.id,
+                    "Token Issued",
+                    f"Aid token {token} issued to {user.first_name} {user.second_name}",
+                )
 
-                    print(f"Send SMS to {user.contact}: Your Aid Token is {token}")
-                    response = "END Token sent via SMS."
-                except Exception as e:
-                    db.session.rollback()
-                    return "END Failed to generate token. Try again later.", 200
+                print(f"Send SMS to {user.contact}: Your Aid Token is {token}")
+                response = "END Token sent via SMS."
 
             elif choice == "2":
-                center, err_msg = get_user_active_center(user.id)
-                if err_msg:
-                    return f"END {err_msg}", 200
+                active_center = DistributionCenter.query.filter_by(
+                    is_active=True
+                ).first()
+
+                if not active_center:
+                    return "END No active distribution Center.", 200
+
+                if (
+                    active_center.expiry_time
+                    and active_center.expiry_time < datetime.utcnow()
+                ):
+                    # token.token_status = 'expired'
+                    # db.session.commit()
+                    return (
+                        "END Distribution session expired. Your token is now expired.",
+                        200,
+                    )
 
                 token = (
                     AidTokens.query.filter_by(
-                        user_id=user.id, distribution_center_id=center.id
+                        user_id=user.id, distribution_center_id=active_center.id
                     )
                     .order_by(AidTokens.token_issued_at.desc())
                     .first()
                 )
 
                 if not token:
-                    return (
-                        "END You have not requested a token for this active session.",
-                        200,
-                    )
+                    return "END You have not requested a token.", 200
 
                 response = f"END Token: {token.aid_token}\nStatus: {token.token_status}"
 
             elif choice == "9":
                 response = "END Thank you for trusting AidBridge."
+                # Clear session on exit
                 db.session.delete(session)
                 db.session.commit()
 
             else:
                 response = "END Invalid choice."
 
+    # EXIT
     elif parts[0] == "9":
         response = "END Thank you for trusting AidBridge."
+        # Clear session if exists
         session = UssdSession.query.filter_by(session_id=session_id).first()
         if session:
             db.session.delete(session)
@@ -235,34 +245,37 @@ def ussd_callback():
 @token_required
 @profile_required
 def request_smartphone_token(current_user_id):
+    # Verify User (Smartphone users)
     user = Users.query.get(current_user_id)
     if not user:
         return jsonify({"error": "Beneficiary not found"}), 404
 
-    center, err_msg = get_user_active_center(user.id)
-    if err_msg:
-        return jsonify({"error": err_msg}), 400
+    active_center = DistributionCenter.query.filter_by(is_active=True).first()
+    if not active_center:
+        return jsonify({"error": "No active distribution session at the moment."}), 404
 
+    if active_center.expiry_time and active_center.expiry_time < datetime.utcnow():
+        return jsonify({"error": "The active distribution session has expired."}), 400
+
+    # Check if user already has a token for the session
     existing_token = (
-        AidTokens.query.filter_by(user_id=user.id, distribution_center_id=center.id)
+        AidTokens.query.filter_by(
+            user_id=user.id, distribution_center_id=active_center.id
+        )
         .order_by(AidTokens.token_issued_at.desc())
         .first()
     )
 
     if existing_token:
         if existing_token.token_status == "active":
+            # Return the existing token so Flutter can redraw the QR code
             return (
                 jsonify(
                     {
                         "message": "Retrieved existing active token.",
                         "aid_token": existing_token.aid_token,
                         "token_status": existing_token.token_status,
-                        "center_name": center.aid_center_name,
-                        "expiry_time": (
-                            center.expiry_time.isoformat()
-                            if center.expiry_time
-                            else None
-                        ),
+                        "center_name": active_center.aid_center_name,
                     }
                 ),
                 200,
@@ -271,60 +284,52 @@ def request_smartphone_token(current_user_id):
         elif existing_token.token_status == "used":
             return (
                 jsonify(
-                    {
-                        "error": "You have already received your aid for this center session."
-                    }
+                    {"error": "You have already received your aid for this session."}
                 ),
                 400,
             )
 
         elif existing_token.token_status == "expired":
-            return (
-                jsonify({"error": "Your token for this center session has expired."}),
-                400,
-            )
+            return jsonify({"error": "Your token for this session has expired."}), 400
 
-    try:
-        token_string = generate_aid_token(user)
+    # 4. Generate new token if they don't have one
+    token_string = generate_aid_token(user)
 
-        new_token = AidTokens(
-            user_id=user.id,
-            aid_token=token_string,
-            token_status="active",
-            token_issued_at=datetime.utcnow(),
-            distribution_center_id=center.id,
-        )
-        db.session.add(new_token)
-        db.session.commit()
+    new_token = AidTokens(
+        user_id=user.id,
+        aid_token=token_string,
+        token_status="active",
+        token_issued_at=datetime.utcnow(),
+        distribution_center_id=active_center.id,
+    )
+    db.session.add(new_token)
+    db.session.commit()
 
-        log_action(
-            user.id,
-            "Token Issued",
-            f"Aid token {token_string} issued to smartphone user {user.first_name} {user.second_name}",
-        )
+    # 5. Log the action
+    log_action(
+        user.id,
+        "Token Issued",
+        f"Aid token {token_string} issued to smartphone user {user.first_name} {user.second_name}",
+    )
 
-        return (
-            jsonify(
-                {
-                    "message": "Token generated successfully",
-                    "aid_token": token_string,
-                    "token_status": "active",
-                    "center_name": center.aid_center_name,
-                    "expiry_time": (
-                        center.expiry_time.isoformat() if center.expiry_time else None
-                    ),
-                }
-            ),
-            201,
-        )
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": "Failed to generate token.", "details": str(e)}), 500
+    # 6. Send the token data back to Flutter
+    return (
+        jsonify(
+            {
+                "message": "Token generated successfully",
+                "aid_token": token_string,
+                "token_status": "active",
+                "center_name": active_center.aid_center_name,
+            }
+        ),
+        201,
+    )
 
 
 @user_bp.route("/token-history", methods=["GET"])
 @token_required
 def get_token_history(current_user_id):
+    # Fetch all tokens requested by this beneficiary, sorted by newest first
     tokens = (
         AidTokens.query.filter_by(user_id=current_user_id)
         .order_by(AidTokens.token_issued_at.desc())
@@ -333,7 +338,8 @@ def get_token_history(current_user_id):
 
     history_data = []
     for token in tokens:
-        center = (
+        # Check the distribution center to get the actual center name
+        session = (
             DistributionCenter.query.get(token.distribution_center_id)
             if token.distribution_center_id
             else None
@@ -350,12 +356,7 @@ def get_token_history(current_user_id):
                     else None
                 ),
                 "center_name": (
-                    center.aid_center_name if center else "General Distribution"
-                ),
-                "expiry_time": (
-                    center.expiry_time.isoformat()
-                    if center and center.expiry_time
-                    else None
+                    session.aid_center_name if session else "General Distribution"
                 ),
             }
         )
@@ -366,79 +367,3 @@ def get_token_history(current_user_id):
         ),
         200,
     )
-
-
-@user_bp.route("/token-status", methods=["GET"])
-@token_required
-def get_token_status(current_user_id):
-
-    user = Users.query.get(current_user_id)
-
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-
-    if user.role != "beneficiary":
-        return jsonify({"error": "Only beneficiaries can access token status"}), 403
-
-
-    # Get beneficiary selected center
-    household = Household.query.filter_by(user_id=user.id).first()
-
-    if not household or not household.center_id:
-        return jsonify(
-            {
-                "error": "No distribution center selected. Please complete your profile."
-            }
-        ), 400
-
-
-    center = DistributionCenter.query.get(household.center_id)
-
-    if not center:
-        return jsonify(
-            {
-                "error": "Selected distribution center no longer exists."
-            }
-        ), 404
-
-
-    # Get latest token for this beneficiary at this center
-    token = (
-        AidTokens.query.filter_by(
-            user_id=user.id,
-            distribution_center_id=center.id
-        )
-        .order_by(AidTokens.token_issued_at.desc())
-        .first()
-    )
-
-
-    if not token:
-        return jsonify(
-            {
-                "has_token": False,
-                "message": "No active aid token found.",
-                "center_name": center.aid_center_name
-            }
-        ), 200
-
-
-    return jsonify(
-        {
-            "has_token": True,
-            "aid_token": token.aid_token,
-            "token_status": token.token_status,
-            "center_id": center.id,
-            "center_name": center.aid_center_name,
-            "token_issued_at": (
-                token.token_issued_at.isoformat()
-                if token.token_issued_at
-                else None
-            ),
-            "expiry_time": (
-                center.expiry_time.isoformat()
-                if center.expiry_time
-                else None
-            )
-        }
-    ), 200

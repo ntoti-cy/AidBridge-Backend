@@ -3,7 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 from app import db
-from app.models import AidTokens, Users, Household, DistributionCenter
+from app.models import Users, Household, DistributionCenter
 from app.Admin.audit import log_action
 
 admin_bp = Blueprint("admin_bp", __name__)
@@ -92,9 +92,7 @@ def validate_worker(data, worker=None):
     if contact:
         contact_str = str(contact)
         if not contact_str.isdigit():
-            errors.setdefault("contact", []).append(
-                "Contact must contain only numbers."
-            )
+            errors.setdefault("contact", []).append("Contact must contain only numbers.")
         elif len(contact_str) < 10:
             errors.setdefault("contact", []).append(
                 "Contact must be at least 10 digits."
@@ -197,7 +195,6 @@ def create_aid_worker():
             ),
             500,
         )
-
 
 # Get All Aid Workers
 @admin_bp.route("/aid-workers", methods=["GET"])
@@ -426,7 +423,6 @@ def update_worker(worker_id):
             ),
             500,
         )
-
 
 # Delete Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["DELETE"])
@@ -804,57 +800,43 @@ def activate_distribution_center(center_id):
 # Deactivate Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>/deactivate", methods=["PATCH"])
 def deactivate_distribution_center(center_id):
+
     admin = get_admin()
+
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     center = DistributionCenter.query.get(center_id)
+
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
     if not center.is_active:
         return jsonify({"message": "Distribution Center is already inactive."}), 200
 
-    try:
-        # Admin emergency shutdown: cascade expiration to active tokens
-        AidTokens.query.filter_by(
-            distribution_center_id=center.id, token_status="active"
-        ).update({"token_status": "expired"})
+    center.is_active = False
 
-        center.is_active = False
-        db.session.commit()
+    db.session.commit()
 
-        log_action(
-            admin.id,
-            "Distribution Center Force Deactivated",
-            f"Admin force-deactivated {center.aid_center_name} and expired active tokens.",
-        )
+    log_action(
+        admin.id,
+        "Distribution Center Deactivated",
+        f"{center.aid_center_name} was deactivated.",
+    )
 
-        return (
-            jsonify(
-                {
-                    "message": "Distribution Center deactivated successfully and active tokens expired.",
-                    "center": {
-                        "id": center.id,
-                        "aid_center_name": center.aid_center_name,
-                        "is_active": center.is_active,
-                    },
-                }
-            ),
-            200,
-        )
-
-    except Exception as e:
-        db.session.rollback()
-        return (
-            jsonify(
-                {
-                    "error": "Failed to deactivate Distribution Center.",
-                    "details": str(e),
-                }
-            ),
-            500,
-        )
+    return (
+        jsonify(
+            {
+                "message": "Distribution Center deactivated successfully.",
+                "center": {
+                    "id": center.id,
+                    "aid_center_name": center.aid_center_name,
+                    "is_active": center.is_active,
+                },
+            }
+        ),
+        200,
+    )
 
 
 # Delete Distribution Center
