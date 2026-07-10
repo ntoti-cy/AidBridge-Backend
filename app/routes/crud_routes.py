@@ -80,8 +80,17 @@ def get_my_profile(current_user_id):
     household = Household.query.filter_by(user_id=user.id).first()
 
     is_profile_complete = False
+    total_members = None
+    dependents_count =None
+    income_level = None
+    disability_present =None
     if household:
         is_profile_complete = household.is_profile_complete
+        total_members = household.total_members
+        dependents_count = household.dependents_count
+        income_level = household.income_level
+        disability_present = household.disability_present
+
 
     return (
         jsonify(
@@ -96,6 +105,10 @@ def get_my_profile(current_user_id):
                 "requires_password_change": user.requires_password_change,
                 "assigned_center_id": user.assigned_center_id,
                 "assigned_center_name": center.aid_center_name if center else None,
+                "total_members": total_members,
+                "dependents_count": dependents_count,
+                "income_level": income_level,
+                "disability_present": disability_present,
             }
         ),
         200,
