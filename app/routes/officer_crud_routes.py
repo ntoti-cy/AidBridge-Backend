@@ -52,11 +52,28 @@ def start_distribution_session(current_user_id):
 @token_required
 def end_distribution_session(current_user_id, session_id):
     worker = Users.query.get(current_user_id)
-    center = DistributionCenter.query.get(worker.assigned_center_id)
+    if not worker or not worker.assigned_center_id:
+        return jsonify({"error": "You must be assigned to a distribution center."}), 403
 
+    # Ensure the officer is only ending the session for their OWN assigned center
+    if worker.assigned_center_id != session_id:
+        return (
+            jsonify(
+                {
+                    "error": "Unauthorized to end session for another distribution center."
+                }
+            ),
+            403,
+        )
+
+    center = DistributionCenter.query.get(session_id)
     if not center:
-        return jsonify({"error": "Center Session not found"}), 404
+        return jsonify({"error": "Distribution center not found."}), 404
 
+    if not center.is_active:
+        return jsonify({"message": "Distribution center is already inactive."}), 200
+
+    # Cascade the expiration to all active tokens for this center
     AidTokens.query.filter_by(
         distribution_center_id=center.id, token_status="active"
     ).update({"token_status": "expired"})
@@ -69,9 +86,12 @@ def end_distribution_session(current_user_id, session_id):
         "Distribution Session Ended",
         f"Officer {worker.first_name} {worker.second_name} ended distribution session at center {center.aid_center_name}",
     )
+
     return (
         jsonify(
-            {"message": f"Distribution session for {center.aid_center_name} ended"}
+            {
+                "message": f"Distribution session for {center.aid_center_name} ended and active tokens expired."
+            }
         ),
         200,
     )
