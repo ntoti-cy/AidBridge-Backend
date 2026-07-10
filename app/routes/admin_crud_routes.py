@@ -3,7 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 from app import db
-from app.models import Users, Household, DistributionCenter
+from app.models import AidTokens, Users, Household, DistributionCenter
 from app.Admin.audit import log_action
 
 admin_bp = Blueprint("admin_bp", __name__)
