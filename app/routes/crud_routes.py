@@ -1,3 +1,5 @@
+import re
+
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from app.models import DistributionCenter, Household, Users
@@ -72,13 +74,16 @@ def get_my_profile(current_user_id):
     if not user:
         return jsonify({"error": "User profile not found"}), 404
 
-    center = None
-
-    if user.assigned_center_id:
-        center = DistributionCenter.query.get(user.assigned_center_id)
-
     household = Household.query.filter_by(user_id=user.id).first()
 
+    center = None
+    assigned_center_id =None
+
+    if household and household.center_id:
+        assigned_center_id =household.center_id
+        center =DistributionCenter.query.get(household.center_id)
+
+    
     is_profile_complete = False
     total_members = None
     dependents_count =None
@@ -103,7 +108,7 @@ def get_my_profile(current_user_id):
                 "role": user.role,
                 "is_profile_complete": is_profile_complete,
                 "requires_password_change": user.requires_password_change,
-                "assigned_center_id": user.assigned_center_id,
+                "assigned_center_id":assigned_center_id,
                 "assigned_center_name": center.aid_center_name if center else None,
                 "total_members": total_members,
                 "dependents_count": dependents_count,
@@ -149,7 +154,20 @@ def complete_profile(current_user_id):
     household.disability_present = data.get(
         "disability_present", household.disability_present
     )
-    household.center_id = data.get("center_id", household.center_id)
+    if "income_level" in data:
+        raw_income = data.get("income_level")
+        if isinstance(raw_income, (int, float)):
+            household.income_level = float(raw_income)
+        elif isinstance(raw_income, str):
+            cleaned_income = re.sub(r"[^\d.]", "", raw_income)
+            household.income_level = float(cleaned_income) if cleaned_income else 0.0
+        else:
+            household.income_level = 0.0
+
+    center_id = data.get("center_id")
+    if center_id:
+        household.center_id = center_id
+        user.assigned_center_id =center_id
 
     if household.total_members < 1:
         return jsonify({"error": "Total members must be at least 1."}), 400
