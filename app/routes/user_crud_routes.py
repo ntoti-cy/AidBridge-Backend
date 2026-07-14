@@ -88,7 +88,7 @@ def ussd_callback():
     session_id = request.form.get("sessionId")
     contact = request.form.get("phoneNumber")
     if contact:
-        contact = contact.replace("+","").replace("","")
+        contact = contact.replace("+", "").replace(" ", "")
     text = request.form.get("text")
 
     response = ""
@@ -96,32 +96,36 @@ def ussd_callback():
     if text:
         parts = text.split("*")
         if parts[-1] == "0":
-            # Check if we are inside the profile wizard and can go back a step
             session_check = UssdSession.query.filter_by(session_id=session_id).first()
             if session_check and session_check.last_active and (datetime.utcnow() - session_check.last_active).total_seconds() > 300:
                 db.session.delete(session_check)
                 db.session.commit()
                 return "END Session expired. Please login again.", 200
 
+            # Handle going back a step in profile wizard
             if session_check and session_check.current_menu == "profile" and session_check.profile_step > 1:
                 if session_check.profile_step == 2:
                     session_check.profile_data.pop("total_members", None)
-                    flag_modified(session_check, "profile_data")
-                    
                 elif session_check.profile_step == 3:
                     session_check.profile_data.pop("dependents_count", None)
-                    flag_modified(session_check, "profile_data")
                 elif session_check.profile_step == 4:
                     session_check.profile_data.pop("disability_present", None)
-                    flag_modified(session_check, "profile_data")
                 elif session_check.profile_step == 5:
                     session_check.profile_data.pop("income_level", None)
-                    flag_modified(session_check, "profile_data")
                 
+                flag_modified(session_check, "profile_data")
                 session_check.profile_step -= 1
                 session_check.last_active = datetime.utcnow()
                 db.session.commit()
-                # Pop back up one part from the USSD string representation
+                parts = parts[:-2]
+                text = "*".join(parts)
+            # Handle going back out of change password wizard
+            elif session_check and session_check.current_menu == "change_password":
+                session_check.current_menu = "dashboard"
+                session_check.profile_step = 0
+                session_check.profile_data = {}
+                session_check.last_active = datetime.utcnow()
+                db.session.commit()
                 parts = parts[:-2]
                 text = "*".join(parts)
             else:
@@ -134,6 +138,7 @@ def ussd_callback():
     parts = text.split("*") if text else []
     current_answer = parts[-1] if parts else ""
 
+    # Root Level Menu
     if text == "":
         response = "CON Welcome to Aidbridge Aid Access System\n"
         response += "Bridging Aid to the last Mile\n"
@@ -141,6 +146,7 @@ def ussd_callback():
         response += "2.Login\n"
         response += "9.Exit"
 
+    # Option 1: Registration Wizard
     elif parts[0] == "1":
         if len(parts) == 1:
             response = "CON Enter First Name:"
@@ -153,14 +159,12 @@ def ussd_callback():
         elif len(parts) == 5:
             first_name = parts[1]
             second_name = parts[2]
-
             try:
                 national_id = int(parts[3])
             except ValueError:
                 return "END Invalid National ID.", 200
 
             password = parts[4]
-
             data = {
                 "first_name": first_name,
                 "second_name": second_name,
@@ -169,16 +173,16 @@ def ussd_callback():
                 "password": password,
             }
 
-            with current_app.test_request_context(
-                "/register", method="POST", json=data
-            ):
+            with current_app.test_request_context("/register", method="POST", json=data):
                 register_response = register()
                 if register_response[1] != 201:
                     return f"END {register_response[0].json.get('error')}", 200
 
             response = "END Registration Successful. Please Login."
 
+    #Login 
     elif parts[0] == "2":
+        # Initial login password prompt
         if len(parts) == 1:
             response = "CON Enter Password:"
 
@@ -187,73 +191,11 @@ def ussd_callback():
             user = Users.query.filter_by(contact=contact).first()
 
             if not user:
-                return "END User not found"
+                return "END User not found", 200
             if not check_password_hash(user.password, password):
                 return "END Invalid Password.", 200
 
             session = get_or_create_ussd_session(session_id)
-
-            if session.current_menu =="change_password":
-                user =Users.query.get(session.user_id)
-
-                if session.profile_step == 1:
-                    old_password = current_answer
-
-                    if not check_password_hash(user.password, old_password):
-                        return "END The password entered doesnot match your current password",200
-                    
-                    session.profile_data ={
-                        "old_password_verified":True
-                        }
-                    flag_modified(session, "profile_data")
-                    session.profile_step =2
-                    session.last_active =datetime.utcnow()
-                    db.session.commit()
-
-                    response = "CON Enter new passoword:"
-
-                elif session.profile_step ==2:
-                    new_password = current_answer
-
-                    if len(new_password)< 6:
-                        return "END Password must be at least 6 characters.",200
-
-                    data = session.profile_data or {}
-                    data ["new_password"] =new_password
-                    session.profile_data =data
-                    flag_modified(session, "profile_data")
-
-                    session. profile_step =3
-                    session.last_active = datetime.utcnow
-                    db.session.commit()
-
-                    response = "CON Confirm new password:"
-
-            elif session.profile_step ==3:
-                    confirm_password = current_answer
-
-                    new_password = (session.profile_data.get("new_password"))
-
-                    if confirm_password != new_password:
-                        return "END Password  do not match.",200
-                    
-                    user.password =generate_password_hash( new_password)
-
-                    session.current_menu = "dashboard"
-                    session.profile_step = 0
-                    session.profile_data ={}
-                    session.last_active = datetime.utcnow
-
-                    flag_modified(session, "profile_data")
-                    db.session.commit()
-
-                    response = ("END Password changes successfully.")
-
-                    return response ,200
-                    
-            
-           
-
             session.user_id = user.id
             session.authenticated = True
             session.current_menu = "dashboard"
@@ -274,19 +216,82 @@ def ussd_callback():
                 response += "1.Complete Profile\n"
                 response += "9.Exit"
 
+        # Subsequent authenticated choices or ongoing wizards (length >= 3)
         elif len(parts) >= 3:
-            choice = parts[2]
             session = get_or_create_ussd_session(session_id)
             if not session or not session.authenticated:
                 return "END Session expired. Please login again.", 200
 
-            
             user = Users.query.get(session.user_id)
             household = Household.query.filter_by(user_id=user.id).first()
             is_complete = household and household.is_profile_complete
 
-            # Route choice based on profile completion status
+            # INTERCEPT: Handle active Change Password multi-step wizard
+            if session.current_menu == "change_password":
+                try:
+                    if session.profile_step == 1:
+                        # Evaluating current/old password input (which lives at parts[3] roughly depending on length)
+                        old_password = current_answer
+                        if not check_password_hash(user.password, old_password):
+                            return "END Current password entered is incorrect.", 200
+                        
+                        session.profile_data = {"old_password_verified": True}
+                        flag_modified(session, "profile_data")
+                        session.profile_step = 2
+                        session.last_active = datetime.utcnow()
+                        db.session.commit()
+                        return "CON Enter new password:\n0.Back", 200
+
+                    elif session.profile_step == 2:
+                        new_password = current_answer
+                        if len(new_password) < 6:
+                            return "END Password must be at least 6 characters.", 200
+                    
+                        if check_password_hash(user.password, new_password):
+                            return "END New password must be different from the current password.",200
+                    
+                          
+
+                        data = session.profile_data or {}
+                        data["new_password"] = new_password
+                        session.profile_data = data
+                        flag_modified(session, "profile_data")
+                        session.profile_step = 3
+                        session.last_active = datetime.utcnow()
+                        db.session.commit()
+                        return "CON Confirm new password:\n0.Back", 200
+
+                    elif session.profile_step == 3:
+                        confirm_password = current_answer
+                        new_password = session.profile_data.get("new_password")
+
+                        if confirm_password != new_password:
+                            return "END Passwords do not match.", 200
+                        
+                        user.password = generate_password_hash(new_password)
+                        session.current_menu = "dashboard"
+                        session.profile_step = 0
+                        session.profile_data = {}
+                        session.last_active = datetime.utcnow()
+                        flag_modified(session, "profile_data")
+                        session. authenticated = False
+                        db.session.commit()
+
+
+                        log_action(
+                            user.id, "Password Changed",
+                            f"{user.first_name} changed their password"
+                        )
+
+                        return "END Password changed successfully.", 200
+                except Exception as e:
+                    db.session.rollback()
+                    print("PASSWORD CHANGE ERROR:", e)
+                    return "END Failed to change password.", 200
+
+            # Standard Routing for Incomplete Profile
             if not is_complete:
+                choice = parts[2]
                 if choice == "1":
                     if not household:
                         household = Household(user_id=user.id)
@@ -311,7 +316,7 @@ def ussd_callback():
                             data = session.profile_data or {}
                             data["total_members"] = total_members
                             session.profile_data = data
-                            flag_modified(session,"profile_data")
+                            flag_modified(session, "profile_data")
                             session.profile_step = 2
                             session.last_active = datetime.utcnow()
                             db.session.commit()
@@ -330,7 +335,7 @@ def ussd_callback():
                             data = session.profile_data or {}
                             data["dependents_count"] = dependents
                             session.profile_data = data
-                            flag_modified(session,"profile_data")
+                            flag_modified(session, "profile_data")
                             session.profile_step = 3
                             session.last_active = datetime.utcnow()
                             db.session.commit()
@@ -346,7 +351,7 @@ def ussd_callback():
                         data = session.profile_data or {}
                         data["disability_present"] = (disability == "1")
                         session.profile_data = data
-                        flag_modified(session,"profile_data")
+                        flag_modified(session, "profile_data")
                         session.profile_step = 4
                         session.last_active = datetime.utcnow()
                         db.session.commit()
@@ -361,7 +366,7 @@ def ussd_callback():
                             data = session.profile_data or {}
                             data["income_level"] = income
                             session.profile_data = data
-                            flag_modified(session,"profile_data")
+                            flag_modified(session, "profile_data")
                             session.profile_step = 5
                             session.last_active = datetime.utcnow()
                             db.session.commit()
@@ -383,28 +388,23 @@ def ussd_callback():
                             center = centers[selected]
 
                             profile = session.profile_data or {}
-                            
-                            if not all(key in profile for key in[
+                            if not all(key in profile for key in [
                                 "total_members",
                                 "dependents_count",
                                 "disability_present",
                                 "income_level"
                             ]):
-                                return "END Profile data incomplete.Please restart profile.",200
-                                
-                            
+                                return "END Profile data incomplete. Please restart profile.", 200
 
-                            household.total_members = profile.get("total_members",1)
-                            household.dependents_count = profile.get("dependents_count",0)
-                            household.disability_present = profile.get("disability_present",False)
-                            household.income_level = profile.get("income_level",0)
+                            household.total_members = profile.get("total_members", 1)
+                            household.dependents_count = profile.get("dependents_count", 0)
+                            household.disability_present = profile.get("disability_present", False)
+                            household.income_level = profile.get("income_level", 0)
 
                             household.center_id = center.id
                             household.calculate_score()
                             household.is_profile_complete = True
                             user.assigned_center_id = center.id
-
-                            
 
                             session.profile_step = 0
                             session.current_menu = "dashboard"
@@ -434,9 +434,9 @@ def ussd_callback():
                 else:
                     response = "END Invalid choice."
             
-            
+            # Standard Routing for Complete Profile
             else:
-                # Profile is complete; map choices 1, 2, 3 and 9
+                choice = parts[2]
                 if choice == "1":
                     center, err_msg = get_user_active_center(user.id)
                     if err_msg:
@@ -452,7 +452,7 @@ def ussd_callback():
 
                     if existing_token:
                         if existing_token.token_status == "active":
-                            return "END You already have an active token .", 200
+                            return "END You already have an active token.", 200
                         elif existing_token.token_status == "used":
                             return "END You have already used your token.", 200
                         elif existing_token.token_status == "expired":
@@ -479,7 +479,7 @@ def ussd_callback():
 
                         print(f"Send SMS to {user.contact}: Your Aid Token is {token}")
                         response = "END Token sent via SMS."
-                    except Exception :
+                    except Exception:
                         db.session.rollback()
                         return "END Failed to generate token. Try again later.", 200
 
@@ -501,28 +501,25 @@ def ussd_callback():
 
                     response = f"END Token: {token.aid_token}\nStatus: {token.token_status}"
 
-                elif choice =="3":
+                elif choice == "3":
+                    response = (
+                        f"END Profile Details\n"
+                        f"Name: {user.first_name} {user.second_name}\n"
+                        f"National ID: {user.national_id}\n"
+                        f"Phone: {user.contact}\n"
+                        f"Members: {household.total_members if household else 'N/A'}\n"
+                        f"Dependents: {household.dependents_count if household else 'N/A'}\n"
+                        f"Disability: {'Yes' if household and household.disability_present else 'No'}\n"
+                        f"Income: KES {household.income_level if household else 'N/A'}\n"
+                        f"Center: {household.center.aid_center_name if household and household.center else 'Not assigned'}"
+                    )
 
-                    response =(
-                         f"END Profile\n"
-                         f"Name: {user.first_name} {user.second_name}\n"
-                         f"National ID: {user.national_id}\n"
-                         f"Phone: {user.contact}\n"
-                         f"Household Members: {household.total_members}\n"
-                         f"Dependents: {household.dependents_count}\n"
-                         f"Disability: {'Yes' if household.disability_present else 'No'}\n"
-                         f"Income: KES {household.income_level}\n"
-                         f"Center: {household.center.aid_center_name if household.center else 'Not assigned'}"
-                         
-                     )
-                    
-                elif choice =="4":
-                    session.current_menu ="change_password"
-                    session.profile_step =1
-                    session.last_active =datetime.utcnow()
-                    db.session.commit ()
-                    response = "CON Enter current password:"
-
+                elif choice == "4":
+                    session.current_menu = "change_password"
+                    session.profile_step = 1
+                    session.last_active = datetime.utcnow()
+                    db.session.commit()
+                    response = "CON Enter current password:\n0.Back"
 
                 elif choice == "9":
                     response = "END Thank you for trusting AidBridge."
