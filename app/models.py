@@ -58,7 +58,11 @@ class UssdSession(db.Model):
     session_id = db.Column(db.String(150), unique=True, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("Users.id"))
     authenticated = db.Column(db.Boolean, default=False)
+    current_menu = db.Column(db.String(50), default="main")
+    profile_step = db.Column(db.Integer, default=0)
+    profile_data = db.Column(db.JSON, default=dict )
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
+
 
     def __repr__(self):
         return f"<Session {self.session_id}>"
