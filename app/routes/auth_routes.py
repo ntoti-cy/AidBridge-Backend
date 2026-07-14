@@ -98,6 +98,22 @@ def register():
 
     if errors:
         return jsonify({"error": errors}), 400
+    
+    existing_contact = Users.query.filter_by(contact=contact).first()
+    if existing_contact:
+        errors.setdefault("contact",[]).append(
+            "A User with this phone nummber already exists"
+        )
+    
+    existing_national_id =Users.query.filter_by( national_id =national_id).first()
+    if existing_national_id:
+        errors.setdefault("national-id",[]).append(
+            "A User with this National ID already exists"
+        )
+    
+    if errors:
+        return jsonify({"errors": errors}),400
+
 
     hashed_password = generate_password_hash(password)
 

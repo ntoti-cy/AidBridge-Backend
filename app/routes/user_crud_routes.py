@@ -1,6 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, current_app, jsonify, request
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from app import db
 from app.Admin.audit import log_action
 from sqlalchemy.orm.attributes import flag_modified
@@ -139,7 +139,7 @@ def ussd_callback():
         response += "Bridging Aid to the last Mile\n"
         response += "1.Register\n"
         response += "2.Login\n"
-        response += "3.Exit"
+        response += "9.Exit"
 
     elif parts[0] == "1":
         if len(parts) == 1:
@@ -192,6 +192,66 @@ def ussd_callback():
                 return "END Invalid Password.", 200
 
             session = get_or_create_ussd_session(session_id)
+
+            if session.current_menu =="change_password":
+                user =Users.query.get(session.user_id)
+
+                if session.profile_step == 1:
+                    old_password = current_answer
+
+                    if not check_password_hash(user.password, old_password):
+                        return "END The password entered doesnot match your current password",200
+                    
+                    session.profile_data ={
+                        "old_password_verified":True
+                        }
+                    flag_modified(session, "profile_data")
+                    session.profile_step =2
+                    session.last_active =datetime.utcnow()
+                    db.session.commit()
+
+                    response = "CON Enter new passoword:"
+
+                elif session.profile_step ==2:
+                    new_password = current_answer
+
+                    if len(new_password)< 6:
+                        return "END Password must be at least 6 characters.",200
+
+                    data = session.profile_data or {}
+                    data ["new_password"] =new_password
+                    session.profile_data =data
+                    flag_modified(session, "profile_data")
+
+                    session. profile_step =3
+                    session.last_active = datetime.utcnow
+                    db.session.commit()
+
+                    response = "CON Confirm new password:"
+
+            elif session.profile_step ==3:
+                    confirm_password = current_answer
+
+                    new_password = (session.profile_data.get("new_password"))
+
+                    if confirm_password != new_password:
+                        return "END Password  do not match.",200
+                    
+                    user.password =generate_password_hash( new_password)
+
+                    session.current_menu = "dashboard"
+                    session.profile_step = 0
+                    session.profile_data ={}
+                    session.last_active = datetime.utcnow
+
+                    flag_modified(session, "profile_data")
+                    db.session.commit()
+
+                    response = ("END Password changes successfully.")
+
+                    return response ,200
+                    
+            
            
 
             session.user_id = user.id
@@ -207,6 +267,8 @@ def ussd_callback():
             if household and household.is_profile_complete:
                 response += "1.Request Aid Token\n"
                 response += "2.Check Token Status\n"
+                response += "3.View Profile\n"
+                response += "4.Change Password\n"
                 response += "9.Exit"
             else:
                 response += "1.Complete Profile\n"
@@ -372,8 +434,9 @@ def ussd_callback():
                 else:
                     response = "END Invalid choice."
             
+            
             else:
-                # Profile is complete; map choices 1, 2, and 9
+                # Profile is complete; map choices 1, 2, 3 and 9
                 if choice == "1":
                     center, err_msg = get_user_active_center(user.id)
                     if err_msg:
@@ -437,6 +500,29 @@ def ussd_callback():
                         return "END You have not requested a token for this active session.", 200
 
                     response = f"END Token: {token.aid_token}\nStatus: {token.token_status}"
+
+                elif choice =="3":
+
+                    response =(
+                         f"END Profile\n"
+                         f"Name: {user.first_name} {user.second_name}\n"
+                         f"National ID: {user.national_id}\n"
+                         f"Phone: {user.contact}\n"
+                         f"Household Members: {household.total_members}\n"
+                         f"Dependents: {household.dependents_count}\n"
+                         f"Disability: {'Yes' if household.disability_present else 'No'}\n"
+                         f"Income: KES {household.income_level}\n"
+                         f"Center: {household.center.aid_center_name if household.center else 'Not assigned'}"
+                         
+                     )
+                    
+                elif choice =="4":
+                    session.current_menu ="change_password"
+                    session.profile_step =1
+                    session.last_active =datetime.utcnow()
+                    db.session.commit ()
+                    response = "CON Enter current password:"
+
 
                 elif choice == "9":
                     response = "END Thank you for trusting AidBridge."
