@@ -70,13 +70,17 @@ def register():
 
     contact = data.get("contact")
     if contact:
-        contact_str = str(contact)
+        contact_str = str(contact).replace("+","")
         if not contact_str.isdigit():
             errors.setdefault("contact", []).append("Contact must contain only numbers")
         elif len(contact_str) < 10:
             errors.setdefault("contact", []).append(
                 "Contact must be at least 10 digits long"
             )
+
+        else:
+            data["contact"]=contact_str
+            contact = contact_str
 
     email = data.get("email")
     if user_type == "smartphone" and email:
