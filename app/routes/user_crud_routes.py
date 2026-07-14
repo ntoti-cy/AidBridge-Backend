@@ -87,6 +87,8 @@ def get_ussd_centers_menu():
 def ussd_callback():
     session_id = request.form.get("sessionId")
     contact = request.form.get("phoneNumber")
+    if contact:
+        contact = contact.replace("+","").replace("","")
     text = request.form.get("text")
 
     response = ""
