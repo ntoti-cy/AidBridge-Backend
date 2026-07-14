@@ -181,11 +181,13 @@ def ussd_callback():
             response = "CON Enter Password:"
 
         elif len(parts) == 2:
-            password = current_answer
+            password = parts[1]
             user = Users.query.filter_by(contact=contact).first()
 
-            if not user or not check_password_hash(user.password, password):
-                return "END Invalid Credentials.", 200
+            if not user:
+                return "END User not found"
+            if not check_password_hash(user.password, password):
+                return "END Invalid Password.", 200
 
             session = get_or_create_ussd_session(session_id)
            
