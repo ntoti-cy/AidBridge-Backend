@@ -34,12 +34,15 @@ def get_user_active_center(user_id):
 
     return center, None
 
-def get_or_create_ussd_session(session_id):
-    session = UssdSession.query.filter_by(
-        session_id=session_id
-    ).first()
 
-    if session and session.last_active and (datetime.utcnow() - session.last_active).total_seconds() > 300:
+def get_or_create_ussd_session(session_id):
+    session = UssdSession.query.filter_by(session_id=session_id).first()
+
+    if (
+        session
+        and session.last_active
+        and (datetime.utcnow() - session.last_active).total_seconds() > 300
+    ):
         db.session.delete(session)
         db.session.commit()
         session = None
@@ -50,7 +53,7 @@ def get_or_create_ussd_session(session_id):
             current_menu="main",
             profile_step=0,
             profile_data={},
-            last_active=datetime.utcnow()
+            last_active=datetime.utcnow(),
         )
 
         db.session.add(session)
@@ -64,10 +67,10 @@ def get_or_create_ussd_session(session_id):
 
     return session
 
+
 def get_ussd_centers_menu():
     centers = (
-        DistributionCenter.query
-        .filter_by(is_active=True)
+        DistributionCenter.query.filter_by(is_active=True)
         .order_by(DistributionCenter.id)
         .all()
     )
@@ -82,7 +85,8 @@ def get_ussd_centers_menu():
 
     return centers, menu
 
-#USSD
+
+# USSD
 @user_bp.route("/callback", methods=["POST"])
 def ussd_callback():
     session_id = request.form.get("sessionId")
@@ -97,13 +101,22 @@ def ussd_callback():
         parts = text.split("*")
         if parts[-1] == "0":
             session_check = UssdSession.query.filter_by(session_id=session_id).first()
-            if session_check and session_check.last_active and (datetime.utcnow() - session_check.last_active).total_seconds() > 300:
+            if (
+                session_check
+                and session_check.last_active
+                and (datetime.utcnow() - session_check.last_active).total_seconds()
+                > 300
+            ):
                 db.session.delete(session_check)
                 db.session.commit()
                 return "END Session expired. Please login again.", 200
 
             # Handle going back a step in profile wizard
-            if session_check and session_check.current_menu == "profile" and session_check.profile_step > 1:
+            if (
+                session_check
+                and session_check.current_menu == "profile"
+                and session_check.profile_step > 1
+            ):
                 if session_check.profile_step == 2:
                     session_check.profile_data.pop("total_members", None)
                 elif session_check.profile_step == 3:
@@ -112,7 +125,7 @@ def ussd_callback():
                     session_check.profile_data.pop("disability_present", None)
                 elif session_check.profile_step == 5:
                     session_check.profile_data.pop("income_level", None)
-                
+
                 flag_modified(session_check, "profile_data")
                 session_check.profile_step -= 1
                 session_check.last_active = datetime.utcnow()
@@ -173,14 +186,16 @@ def ussd_callback():
                 "password": password,
             }
 
-            with current_app.test_request_context("/register", method="POST", json=data):
+            with current_app.test_request_context(
+                "/register", method="POST", json=data
+            ):
                 register_response = register()
                 if register_response[1] != 201:
                     return f"END {register_response[0].json.get('error')}", 200
 
             response = "END Registration Successful. Please Login."
 
-    #Login 
+    # Login
     elif parts[0] == "2":
         # Initial login password prompt
         if len(parts) == 1:
@@ -234,7 +249,7 @@ def ussd_callback():
                         old_password = current_answer
                         if not check_password_hash(user.password, old_password):
                             return "END Current password entered is incorrect.", 200
-                        
+
                         session.profile_data = {"old_password_verified": True}
                         flag_modified(session, "profile_data")
                         session.profile_step = 2
@@ -246,11 +261,12 @@ def ussd_callback():
                         new_password = current_answer
                         if len(new_password) < 6:
                             return "END Password must be at least 6 characters.", 200
-                    
+
                         if check_password_hash(user.password, new_password):
-                            return "END New password must be different from the current password.",200
-                    
-                          
+                            return (
+                                "END New password must be different from the current password.",
+                                200,
+                            )
 
                         data = session.profile_data or {}
                         data["new_password"] = new_password
@@ -267,20 +283,20 @@ def ussd_callback():
 
                         if confirm_password != new_password:
                             return "END Passwords do not match.", 200
-                        
+
                         user.password = generate_password_hash(new_password)
                         session.current_menu = "dashboard"
                         session.profile_step = 0
                         session.profile_data = {}
                         session.last_active = datetime.utcnow()
                         flag_modified(session, "profile_data")
-                        session. authenticated = False
+                        session.authenticated = False
                         db.session.commit()
 
-
                         log_action(
-                            user.id, "Password Changed",
-                            f"{user.first_name} changed their password"
+                            user.id,
+                            "Password Changed",
+                            f"{user.first_name} changed their password",
                         )
 
                         return "END Password changed successfully.", 200
@@ -329,8 +345,13 @@ def ussd_callback():
                             dependents = int(current_answer)
                             if dependents < 0:
                                 return "END Dependents cannot be negative.", 200
-                            if dependents > session.profile_data.get("total_members", 0):
-                                return "END Dependents cannot exceed household members.", 200
+                            if dependents > session.profile_data.get(
+                                "total_members", 0
+                            ):
+                                return (
+                                    "END Dependents cannot exceed household members.",
+                                    200,
+                                )
 
                             data = session.profile_data or {}
                             data["dependents_count"] = dependents
@@ -349,7 +370,7 @@ def ussd_callback():
                             return "END Invalid choice.", 200
 
                         data = session.profile_data or {}
-                        data["disability_present"] = (disability == "1")
+                        data["disability_present"] = disability == "1"
                         session.profile_data = data
                         flag_modified(session, "profile_data")
                         session.profile_step = 4
@@ -374,7 +395,7 @@ def ussd_callback():
                             centers, menu = get_ussd_centers_menu()
                             if not centers:
                                 return menu, 200
-                            
+
                             return menu + "0.Back", 200
                         except ValueError:
                             return "END Invalid income.", 200
@@ -388,17 +409,27 @@ def ussd_callback():
                             center = centers[selected]
 
                             profile = session.profile_data or {}
-                            if not all(key in profile for key in [
-                                "total_members",
-                                "dependents_count",
-                                "disability_present",
-                                "income_level"
-                            ]):
-                                return "END Profile data incomplete. Please restart profile.", 200
+                            if not all(
+                                key in profile
+                                for key in [
+                                    "total_members",
+                                    "dependents_count",
+                                    "disability_present",
+                                    "income_level",
+                                ]
+                            ):
+                                return (
+                                    "END Profile data incomplete. Please restart profile.",
+                                    200,
+                                )
 
                             household.total_members = profile.get("total_members", 1)
-                            household.dependents_count = profile.get("dependents_count", 0)
-                            household.disability_present = profile.get("disability_present", False)
+                            household.dependents_count = profile.get(
+                                "dependents_count", 0
+                            )
+                            household.disability_present = profile.get(
+                                "disability_present", False
+                            )
                             household.income_level = profile.get("income_level", 0)
 
                             household.center_id = center.id
@@ -415,7 +446,7 @@ def ussd_callback():
                             log_action(
                                 user.id,
                                 "Profile Completed",
-                                f"{user.first_name} selected {center.aid_center_name} via USSD."
+                                f"{user.first_name} selected {center.aid_center_name} via USSD.",
                             )
 
                             response = (
@@ -433,7 +464,7 @@ def ussd_callback():
                     db.session.commit()
                 else:
                     response = "END Invalid choice."
-            
+
             # Standard Routing for Complete Profile
             else:
                 choice = parts[2]
@@ -444,7 +475,9 @@ def ussd_callback():
 
                     existing_token = (
                         AidTokens.query.filter_by(
-                            user_id=user.id, distribution_center_id=center.id
+                            user_id=user.id,
+                            distribution_center_id=center.id,
+                            session_id=center.current_session_id,
                         )
                         .order_by(AidTokens.token_issued_at.desc())
                         .first()
@@ -466,6 +499,7 @@ def ussd_callback():
                             token_status="active",
                             token_issued_at=datetime.utcnow(),
                             distribution_center_id=center.id,
+                            session_id=center.current_session_id,
                         )
                         db.session.add(new_token)
                         session.last_active = datetime.utcnow()
@@ -490,16 +524,23 @@ def ussd_callback():
 
                     token = (
                         AidTokens.query.filter_by(
-                            user_id=user.id, distribution_center_id=center.id
+                            user_id=user.id,
+                            distribution_center_id=center.id,
+                            session_id=center.current_session_id,
                         )
                         .order_by(AidTokens.token_issued_at.desc())
                         .first()
                     )
 
                     if not token:
-                        return "END You have not requested a token for this active session.", 200
+                        return (
+                            "END You have not requested a token for this active session.",
+                            200,
+                        )
 
-                    response = f"END Token: {token.aid_token}\nStatus: {token.token_status}"
+                    response = (
+                        f"END Token: {token.aid_token}\nStatus: {token.token_status}"
+                    )
 
                 elif choice == "3":
                     response = (
@@ -542,7 +583,6 @@ def ussd_callback():
     return response, 200
 
 
-
 @user_bp.route("/request-token", methods=["POST", "GET"])
 @token_required
 @profile_required
@@ -556,7 +596,11 @@ def request_smartphone_token(current_user_id):
         return jsonify({"error": err_msg}), 400
 
     existing_token = (
-        AidTokens.query.filter_by(user_id=user.id, distribution_center_id=center.id)
+        AidTokens.query.filter_by(
+            user_id=user.id,
+            distribution_center_id=center.id,
+            session_id=center.current_session_id,
+        )
         .order_by(AidTokens.token_issued_at.desc())
         .first()
     )
@@ -605,6 +649,7 @@ def request_smartphone_token(current_user_id):
             token_status="active",
             token_issued_at=datetime.utcnow(),
             distribution_center_id=center.id,
+            session_id=center.current_session_id,
         )
         db.session.add(new_token)
         db.session.commit()
@@ -692,65 +737,62 @@ def get_token_status(current_user_id):
     if user.role != "beneficiary":
         return jsonify({"error": "Only beneficiaries can access token status"}), 403
 
-
     # Get beneficiary selected center
     household = Household.query.filter_by(user_id=user.id).first()
 
     if not household or not household.center_id:
-        return jsonify(
-            {
-                "error": "No distribution center selected. Please complete your profile."
-            }
-        ), 400
-
+        return (
+            jsonify(
+                {
+                    "error": "No distribution center selected. Please complete your profile."
+                }
+            ),
+            400,
+        )
 
     center = DistributionCenter.query.get(household.center_id)
 
     if not center:
-        return jsonify(
-            {
-                "error": "Selected distribution center no longer exists."
-            }
-        ), 404
-
+        return jsonify({"error": "Selected distribution center no longer exists."}), 404
 
     # Get latest token for this beneficiary at this center
     token = (
         AidTokens.query.filter_by(
             user_id=user.id,
-            distribution_center_id=center.id
+            distribution_center_id=center.id,
+            session_id=center.current_session_id,
         )
         .order_by(AidTokens.token_issued_at.desc())
         .first()
     )
 
-
     if not token:
-        return jsonify(
-            {
-                "has_token": False,
-                "message": "No active aid token found.",
-                "center_name": center.aid_center_name
-            }
-        ), 200
-
-
-    return jsonify(
-        {
-            "has_token": True,
-            "aid_token": token.aid_token,
-            "token_status": token.token_status,
-            "center_id": center.id,
-            "center_name": center.aid_center_name,
-            "token_issued_at": (
-                token.token_issued_at.isoformat()
-                if token.token_issued_at
-                else None
+        return (
+            jsonify(
+                {
+                    "has_token": False,
+                    "message": "No active aid token found.",
+                    "center_name": center.aid_center_name,
+                }
             ),
-            "expiry_time": (
-                center.expiry_time.isoformat()
-                if center.expiry_time
-                else None
-            )
-        }
-    ), 200
+            200,
+        )
+
+    return (
+        jsonify(
+            {
+                "has_token": True,
+                "aid_token": token.aid_token,
+                "token_status": token.token_status,
+                "center_id": center.id,
+                "center_name": center.aid_center_name,
+                "token_issued_at": (
+                    token.token_issued_at.isoformat() if token.token_issued_at else None
+                ),
+                "expiry_time": (
+                    center.expiry_time.isoformat() if center.expiry_time else None
+                ),
+            }
+        ),
+        200,
+    )

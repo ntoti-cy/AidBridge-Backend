@@ -1,5 +1,4 @@
-import token
-
+import uuid
 from flask import Blueprint, jsonify, request
 from app.Admin.audit import log_action
 from app.models import AidTokens, AuditLog, DistributionCenter, Household, Users
@@ -22,8 +21,13 @@ def start_distribution_session(current_user_id):
         )
     center = DistributionCenter.query.get(worker.assigned_center_id)
 
+    if center.is_active:
+        return jsonify({"error": "A distribution session is already active for this center."}), 400
+
     center.is_active = True
     center.start_time = datetime.utcnow()
+    center.current_session_id = str(uuid.uuid4())
+    center.expiry_time = None
 
     expiry_time_str = request.json.get("expiry_time")
     if expiry_time_str:
@@ -35,6 +39,7 @@ def start_distribution_session(current_user_id):
         current_user_id,
         "Distribution Session Started",
         f"Officer {worker.first_name} {worker.second_name} started distribution session at center {center.aid_center_name}",
+       
     )
 
     return (
@@ -42,13 +47,14 @@ def start_distribution_session(current_user_id):
             {
                 "message": f"Distribution session started for {center.aid_center_name}",
                 "center_id": center.id,
+                "session_id": center.current_session_id,
             }
         ),
         200,
     )
 
 
-@officer_bp.route("/end-distribution-session/<int:session_id>", methods=["POST"])
+@officer_bp.route("/end-distribution-session/<int:center_id>", methods=["POST"])
 @token_required
 def end_distribution_session(current_user_id, session_id):
     worker = Users.query.get(current_user_id)
@@ -57,7 +63,14 @@ def end_distribution_session(current_user_id, session_id):
 
     # Ensure the officer is only ending the session for their OWN assigned center
     if worker.assigned_center_id != session_id:
-        return jsonify({"error": "Unauthorized to end session for another distribution center."}), 403
+        return (
+            jsonify(
+                {
+                    "error": "Unauthorized to end session for another distribution center."
+                }
+            ),
+            403,
+        )
 
     center = DistributionCenter.query.get(session_id)
     if not center:
@@ -68,7 +81,9 @@ def end_distribution_session(current_user_id, session_id):
 
     # Cascade the expiration to all active tokens for this center
     AidTokens.query.filter_by(
-        distribution_center_id=center.id, token_status="active"
+        distribution_center_id=center.id,
+        session_id=center.current_session_id,
+        token_status="active",
     ).update({"token_status": "expired"})
 
     center.is_active = False
@@ -79,10 +94,16 @@ def end_distribution_session(current_user_id, session_id):
         "Distribution Session Ended",
         f"Officer {worker.first_name} {worker.second_name} ended distribution session at center {center.aid_center_name}",
     )
-    
-    return jsonify({
-        "message": f"Distribution session for {center.aid_center_name} ended and active tokens expired."
-    }), 200
+
+    return (
+        jsonify(
+            {
+                "message": f"Distribution session for {center.aid_center_name} ended and active tokens expired."
+            }
+        ),
+        200,
+    )
+
 
 @officer_bp.route("/verify-token", methods=["POST"])
 @token_required
@@ -106,6 +127,14 @@ def verify_token(current_user_id):
     session = DistributionCenter.query.get(token.distribution_center_id)
     if not session or not session.is_active:
         return jsonify({"error": "Distribution session inactive or not found"}), 400
+
+    if token.session_id != session.current_session_id:
+        return (
+            jsonify(
+                {"error": "Token does not belong to the current distribution session."}
+            ),
+            400,
+        )
 
     # Automatic expiry check
     if session.expiry_time and session.expiry_time < datetime.utcnow():
@@ -174,6 +203,15 @@ def collect_aid(current_user_id):
             403,
         )
 
+    center = DistributionCenter.query.get(token.distribution_center_id)
+    if not center or token.session_id != center.current_session_id:
+        return (
+            jsonify(
+                {"error": "Token does not belong to the current distribution session."}
+            ),
+            400,
+        )
+
     if token.token_status != "active":
         return jsonify({"error": f"Token status is {token.token_status}"}), 400
 
@@ -213,14 +251,22 @@ def download_beneficiaries(current_user_id):
     active_session = DistributionCenter.query.filter_by(
         id=officer.assigned_center_id, is_active=True
     ).first()
-    
+
     if not active_session:
-        return jsonify({"error": "No active distribution session found for your assigned center."}), 404
+        return (
+            jsonify(
+                {
+                    "error": "No active distribution session found for your assigned center."
+                }
+            ),
+            404,
+        )
 
     session_tokens = AidTokens.query.filter_by(
-        distribution_center_id=active_session.id
+        distribution_center_id=active_session.id,
+        session_id =active_session.current_session_id,
     ).all()
-    
+
     data = []
     for token in session_tokens:
         user = Users.query.get(token.user_id)
@@ -253,6 +299,7 @@ def download_beneficiaries(current_user_id):
         ),
         200,
     )
+
 
 @officer_bp.route("/recent-activity", methods=["GET"])
 @token_required

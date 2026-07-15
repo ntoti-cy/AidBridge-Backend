@@ -92,7 +92,9 @@ def validate_worker(data, worker=None):
     if contact:
         contact_str = str(contact)
         if not contact_str.isdigit():
-            errors.setdefault("contact", []).append("Contact must contain only numbers.")
+            errors.setdefault("contact", []).append(
+                "Contact must contain only numbers."
+            )
         elif len(contact_str) < 10:
             errors.setdefault("contact", []).append(
                 "Contact must be at least 10 digits."
@@ -195,6 +197,7 @@ def create_aid_worker():
             ),
             500,
         )
+
 
 # Get All Aid Workers
 @admin_bp.route("/aid-workers", methods=["GET"])
@@ -424,6 +427,7 @@ def update_worker(worker_id):
             500,
         )
 
+
 # Delete Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["DELETE"])
 def delete_worker(worker_id):
@@ -608,10 +612,7 @@ def create_distribution_center():
 
     required_fields = [
         "aid_center_name",
-        "county",
-        "sub_county",
-        "location",
-    ]
+        ]
 
     for field in required_fields:
         if not data.get(field):
@@ -641,7 +642,7 @@ def create_distribution_center():
         aid_center_name=aid_center_name,
         start_time=start_time,
         expiry_time=expiry_time,
-        is_active=True,
+        
     )
 
     db.session.add(center)
@@ -691,9 +692,6 @@ def get_distribution_centers():
             {
                 "id": center.id,
                 "aid_center_name": center.aid_center_name,
-                "county": center.county,
-                "sub_county": center.sub_county,
-                "location": center.location,
                 "is_active": center.is_active,
                 "workers_assigned": workers_count,
                 "households": households_count,
@@ -742,9 +740,6 @@ def get_distribution_center(center_id):
             {
                 "id": center.id,
                 "aid_center_name": center.aid_center_name,
-                "county": center.county,
-                "sub_county": center.sub_county,
-                "location": center.location,
                 "is_active": center.is_active,
                 "workers_assigned": len(worker_list),
                 "households": households_count,
@@ -814,7 +809,9 @@ def deactivate_distribution_center(center_id):
     try:
         # Admin emergency shutdown: cascade expiration to active tokens
         AidTokens.query.filter_by(
-            distribution_center_id=center.id, token_status="active"
+            distribution_center_id=center.id,
+            session_id=center.current_session_id,
+            token_status="active",
         ).update({"token_status": "expired"})
 
         center.is_active = False
@@ -826,20 +823,32 @@ def deactivate_distribution_center(center_id):
             f"Admin force-deactivated {center.aid_center_name} and expired active tokens.",
         )
 
-        return jsonify(
-            {
-                "message": "Distribution Center deactivated successfully and active tokens expired.",
-                "center": {
-                    "id": center.id,
-                    "aid_center_name": center.aid_center_name,
-                    "is_active": center.is_active,
-                },
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "message": "Distribution Center deactivated successfully and active tokens expired.",
+                    "center": {
+                        "id": center.id,
+                        "aid_center_name": center.aid_center_name,
+                        "is_active": center.is_active,
+                    },
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": "Failed to deactivate Distribution Center.", "details": str(e)}), 500
+        return (
+            jsonify(
+                {
+                    "error": "Failed to deactivate Distribution Center.",
+                    "details": str(e),
+                }
+            ),
+            500,
+        )
+
 
 # Delete Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>", methods=["DELETE"])

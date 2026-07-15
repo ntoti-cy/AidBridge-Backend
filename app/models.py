@@ -36,6 +36,7 @@ class AidTokens(db.Model):
     distribution_center_id = db.Column(
         db.Integer, db.ForeignKey("distribution_centers.id"), nullable=True
     )
+    session_id = db.Column(db.String(36), nullable =True)
 
     def __repr__(self):
         return f"<AidToken {self.aid_token}>"
@@ -74,7 +75,8 @@ class DistributionCenter(db.Model):
     aid_center_name = db.Column(db.String(150), nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
     expiry_time = db.Column(db.DateTime, nullable=True)
-    is_active = db.Column(db.Boolean, default=True)
+    is_active = db.Column(db.Boolean, default=False)
+    current_session_id = db.Column(db.String(36), nullable =True)
 
     def __repr__(self):
         return self.aid_center_name
