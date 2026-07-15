@@ -68,34 +68,37 @@ def change_password(current_user_id):
 @crud_bp.route("/me", methods=["GET"])
 @token_required
 def get_my_profile(current_user_id):
-
     user = Users.query.get(current_user_id)
-
     if not user:
         return jsonify({"error": "User profile not found"}), 404
 
     household = Household.query.filter_by(user_id=user.id).first()
 
     center = None
-    assigned_center_id =None
+    assigned_center_id = None
 
-    if household and household.center_id:
-        assigned_center_id =household.center_id
-        center =DistributionCenter.query.get(household.center_id)
+    # 1. Check if the user is an officer with a direct center assignment
+    if hasattr(user, 'assigned_center_id') and user.assigned_center_id:
+        assigned_center_id = user.assigned_center_id
+        center = DistributionCenter.query.get(assigned_center_id)
 
-    
+    # 2. Fallback to household center assignment if not found (for beneficiaries)
+    elif household and household.center_id:
+        assigned_center_id = household.center_id
+        center = DistributionCenter.query.get(household.center_id)
+
     is_profile_complete = False
     total_members = None
-    dependents_count =None
+    dependents_count = None
     income_level = None
-    disability_present =None
+    disability_present = None
+    
     if household:
         is_profile_complete = household.is_profile_complete
         total_members = household.total_members
         dependents_count = household.dependents_count
         income_level = household.income_level
         disability_present = household.disability_present
-
 
     return (
         jsonify(
@@ -108,7 +111,7 @@ def get_my_profile(current_user_id):
                 "role": user.role,
                 "is_profile_complete": is_profile_complete,
                 "requires_password_change": user.requires_password_change,
-                "assigned_center_id":assigned_center_id,
+                "assigned_center_id": assigned_center_id,
                 "assigned_center_name": center.aid_center_name if center else None,
                 "total_members": total_members,
                 "dependents_count": dependents_count,
