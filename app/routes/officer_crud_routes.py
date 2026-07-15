@@ -199,28 +199,31 @@ def collect_aid(current_user_id):
 @token_required
 def download_beneficiaries(current_user_id):
     officer = Users.query.get(current_user_id)
-    if not officer.assigned_center_id:
+    if not officer or not officer.assigned_center_id:
         return (
             jsonify(
                 {
-                    "error": "You must be assigned to this distribution center to download beneficiaries."
+                    "error": "You must be assigned to a distribution center to download beneficiaries."
                 }
             ),
             403,
         )
 
-    active_session = DistributionCenter.query.filter_by(is_active=True).first()
+    # Ensure we fetch the active session specifically for THIS officer's assigned center
+    active_session = DistributionCenter.query.filter_by(
+        id=officer.assigned_center_id, is_active=True
+    ).first()
+    
     if not active_session:
-        return jsonify({"error": "No active distribution session found."}), 404
+        return jsonify({"error": "No active distribution session found for your assigned center."}), 404
 
     session_tokens = AidTokens.query.filter_by(
         distribution_center_id=active_session.id
     ).all()
+    
     data = []
-
     for token in session_tokens:
         user = Users.query.get(token.user_id)
-        # Using the foreign key relationship correctly
         household = Household.query.filter_by(user_id=token.user_id).first()
 
         if user:
@@ -250,7 +253,6 @@ def download_beneficiaries(current_user_id):
         ),
         200,
     )
-
 
 @officer_bp.route("/recent-activity", methods=["GET"])
 @token_required

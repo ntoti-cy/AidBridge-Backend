@@ -47,7 +47,11 @@ def create_app():
 
     app.config["SESSION_PERMANENT"] = False
 
-    # app.config["SESSION_TYPE"] = "filesystem"
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_pre_ping": True,  # Automatically tests connection health before executing queries
+    "pool_recycle": 300,
+
+    }
 
     CORS(app)
 
