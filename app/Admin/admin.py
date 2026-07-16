@@ -48,7 +48,7 @@ class BeneficiaryModelView(ModelView):
 class AidWorkerModelView(ModelView):
     can_create = True
     can_edit =True
-    can_delete =False
+    can_delete =True
 
     form_columns = [
         "first_name",

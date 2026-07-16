@@ -139,8 +139,37 @@ def create_aid_worker():
     if errors:
         return jsonify({"errors": errors}), 400
 
-    hashed_password = generate_password_hash(data["password"])
+    # --- NEW: Check if the distribution center is already assigned to another worker ---
+    center_id = data.get("assigned_center_id")
 
+    if center_id:
+        center = db.session.get(DistributionCenter, center_id)
+
+        if not center:
+            return jsonify({"error": "Distribution Center not found"}), 404
+
+        existing_officer = Users.query.filter(
+            Users.assigned_center_id == center.id,
+            Users.role == "aid_worker",
+        ).first()
+
+        if existing_officer:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            f"{center.name} is already assigned to "
+                            f"{existing_officer.first_name} {existing_officer.second_name}. "
+                            "Unassign or reassign that worker first."
+                        )
+                    }
+                ),
+                409,
+            )
+    # -------------------------------------------------------------------------------
+
+    hashed_password = generate_password_hash(data["password"])
+    
     worker = Users(
         first_name=data["first_name"].strip().title(),
         second_name=data["second_name"].strip().title(),
@@ -152,6 +181,7 @@ def create_aid_worker():
         user_type="smartphone",
         requires_password_change=True,
         is_active=True,
+        assigned_center_id=center_id,
     )
 
     try:
@@ -175,6 +205,7 @@ def create_aid_worker():
                         "email": worker.email,
                         "contact": worker.contact,
                         "is_active": worker.is_active,
+                        "assigned_center_id": worker.assigned_center_id,
                     },
                 }
             ),
