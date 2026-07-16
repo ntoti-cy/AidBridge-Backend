@@ -15,7 +15,9 @@ class Users(db.Model):
     user_type = db.Column(db.String(50), nullable=False, default="smartphone")
     role = db.Column(db.String(50), nullable=False, default="beneficiary")
     requires_password_change = db.Column(db.Boolean, default=False)
-    assigned_center_id = db.Column(db.Integer, db.ForeignKey("distribution_centers.id"), nullable=True)
+    assigned_center_id = db.Column(
+        db.Integer, db.ForeignKey("distribution_centers.id"), nullable=True
+    )
     assigned_center = db.relationship("DistributionCenter", backref="workers")
     is_active = db.Column(db.Boolean, default=True)
 
@@ -36,7 +38,7 @@ class AidTokens(db.Model):
     distribution_center_id = db.Column(
         db.Integer, db.ForeignKey("distribution_centers.id"), nullable=True
     )
-    session_id = db.Column(db.String(36), nullable =True)
+    session_id = db.Column(db.String(36), nullable=True)
 
     def __repr__(self):
         return f"<AidToken {self.aid_token}>"
@@ -61,9 +63,8 @@ class UssdSession(db.Model):
     authenticated = db.Column(db.Boolean, default=False)
     current_menu = db.Column(db.String(50), default="main")
     profile_step = db.Column(db.Integer, default=0)
-    profile_data = db.Column(db.JSON, default=dict )
+    profile_data = db.Column(db.JSON, default=dict)
     last_active = db.Column(db.DateTime, default=datetime.utcnow)
-
 
     def __repr__(self):
         return f"<Session {self.session_id}>"
@@ -76,7 +77,7 @@ class DistributionCenter(db.Model):
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
     expiry_time = db.Column(db.DateTime, nullable=True)
     is_active = db.Column(db.Boolean, default=False)
-    current_session_id = db.Column(db.String(36), nullable =True)
+    current_session_id = db.Column(db.String(36), nullable=True)
 
     def __repr__(self):
         return self.aid_center_name

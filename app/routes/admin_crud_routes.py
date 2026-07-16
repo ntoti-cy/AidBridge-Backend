@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify, session
-from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 from app import db
@@ -330,11 +329,11 @@ def update_worker(worker_id):
         worker.contact = data["contact"].strip()
         worker.email = data["email"].strip().lower()
 
-        # Optional password update
+        # password update
         if data.get("password"):
             worker.password = generate_password_hash(data["password"])
 
-        # Optional center reassignment
+        # center reassignment
         if "assigned_center_id" in data:
 
             center_id = data.get("assigned_center_id")
@@ -351,6 +350,27 @@ def update_worker(worker_id):
 
                 if not center:
                     return jsonify({"error": "Distribution Center not found"}), 404
+
+                # One-officer-per-center
+                existing_officer = Users.query.filter(
+                    Users.assigned_center_id == center.id,
+                    Users.role == "aid_worker",
+                    Users.id != worker.id,
+                ).first()
+
+                if existing_officer:
+                    return (
+                        jsonify(
+                            {
+                                "error": (
+                                    f"{center.aid_center_name} is already assigned to "
+                                    f"{existing_officer.first_name} {existing_officer.second_name}. "
+                                    "Unassign or reassign that worker first."
+                                )
+                            }
+                        ),
+                        409,
+                    )
 
                 worker.assigned_center_id = center.id
 
@@ -563,8 +583,17 @@ def deactivate_worker(worker_id):
         return jsonify({"message": "Aid Worker is already inactive."}), 200
 
     try:
+        # Capture the center BEFORE clearing, so we can log and free it up
+        vacated_center = None
+        if worker.assigned_center_id:
+            vacated_center = db.session.get(
+                DistributionCenter, worker.assigned_center_id
+            )
 
         worker.is_active = False
+
+        # A deactivated worker can no longer own a center
+        worker.assigned_center_id = None
 
         db.session.commit()
 
@@ -574,11 +603,33 @@ def deactivate_worker(worker_id):
             f"{worker.first_name} {worker.second_name} was deactivated.",
         )
 
+        if vacated_center:
+            log_action(
+                admin.id,
+                "Distribution Center Unassigned",
+                f"{vacated_center.aid_center_name} was automatically unassigned "
+                f"because {worker.first_name} {worker.second_name} was deactivated. "
+                f"{'A distribution session is still active there and needs attention.' if vacated_center.is_active else ''}".strip(),
+            )
+
         return (
             jsonify(
                 {
                     "message": "Aid Worker deactivated successfully.",
-                    "worker": {"id": worker.id, "is_active": worker.is_active},
+                    "worker": {
+                        "id": worker.id,
+                        "is_active": worker.is_active,
+                        "assigned_center_id": worker.assigned_center_id,
+                    },
+                    "vacated_center": (
+                        {
+                            "id": vacated_center.id,
+                            "aid_center_name": vacated_center.aid_center_name,
+                            "session_still_active": vacated_center.is_active,
+                        }
+                        if vacated_center
+                        else None
+                    ),
                 }
             ),
             200,
@@ -612,7 +663,7 @@ def create_distribution_center():
 
     required_fields = [
         "aid_center_name",
-        ]
+    ]
 
     for field in required_fields:
         if not data.get(field):
@@ -642,7 +693,6 @@ def create_distribution_center():
         aid_center_name=aid_center_name,
         start_time=start_time,
         expiry_time=expiry_time,
-        
     )
 
     db.session.add(center)
@@ -682,9 +732,10 @@ def get_distribution_centers():
 
     for center in centers:
 
-        workers_count = Users.query.filter_by(
+        # One-officer-per-center
+        officer = Users.query.filter_by(
             assigned_center_id=center.id, role="aid_worker"
-        ).count()
+        ).first()
 
         households_count = Household.query.filter_by(center_id=center.id).count()
 
@@ -693,7 +744,15 @@ def get_distribution_centers():
                 "id": center.id,
                 "aid_center_name": center.aid_center_name,
                 "is_active": center.is_active,
-                "workers_assigned": workers_count,
+                "officer": (
+                    {
+                        "id": officer.id,
+                        "first_name": officer.first_name,
+                        "second_name": officer.second_name,
+                    }
+                    if officer
+                    else None
+                ),
                 "households": households_count,
             }
         )
@@ -715,25 +774,12 @@ def get_distribution_center(center_id):
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
-    workers = Users.query.filter_by(
+    # One-officer-per-center: single lookup replaces the old list/loop
+    officer = Users.query.filter_by(
         assigned_center_id=center.id, role="aid_worker"
-    ).all()
+    ).first()
 
     households_count = Household.query.filter_by(center_id=center.id).count()
-
-    worker_list = []
-
-    for worker in workers:
-        worker_list.append(
-            {
-                "id": worker.id,
-                "first_name": worker.first_name,
-                "second_name": worker.second_name,
-                "contact": worker.contact,
-                "email": worker.email,
-                "is_active": worker.is_active,
-            }
-        )
 
     return (
         jsonify(
@@ -741,9 +787,19 @@ def get_distribution_center(center_id):
                 "id": center.id,
                 "aid_center_name": center.aid_center_name,
                 "is_active": center.is_active,
-                "workers_assigned": len(worker_list),
                 "households": households_count,
-                "workers": worker_list,
+                "officer": (
+                    {
+                        "id": officer.id,
+                        "first_name": officer.first_name,
+                        "second_name": officer.second_name,
+                        "contact": officer.contact,
+                        "email": officer.email,
+                        "is_active": officer.is_active,
+                    }
+                    if officer
+                    else None
+                ),
             }
         ),
         200,
@@ -864,18 +920,19 @@ def delete_distribution_center(center_id):
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
-    # Safety Check 1: Assigned Aid Workers
-    assigned_workers = Users.query.filter_by(
+    # Safety Check 1: Assigned Aid Worker only one
+    assigned_officer = Users.query.filter_by(
         assigned_center_id=center.id, role="aid_worker"
-    ).count()
+    ).first()
 
-    if assigned_workers > 0:
+    if assigned_officer:
         return (
             jsonify(
                 {
                     "error": (
                         f"Cannot delete '{center.aid_center_name}'. "
-                        f"{assigned_workers} aid worker(s) are still assigned."
+                        f"{assigned_officer.first_name} {assigned_officer.second_name} "
+                        "is still assigned."
                     )
                 }
             ),
