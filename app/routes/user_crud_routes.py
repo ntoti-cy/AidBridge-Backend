@@ -159,30 +159,51 @@ def ussd_callback():
         response += "2.Login\n"
         response += "9.Exit"
 
-    # Option 1: Registration Wizard
+    # Registration
     elif parts[0] == "1":
         if len(parts) == 1:
-            response = "CON Enter First Name:"
-        elif len(parts) == 2:
-            response = "CON Enter Second Name:"
-        elif len(parts) == 3:
-            response = "CON Enter National ID:"
-        elif len(parts) == 4:
-            response = "CON Set Your Password:"
-        elif len(parts) == 5:
-            first_name = parts[1]
-            second_name = parts[2]
-            try:
-                national_id = int(parts[3])
-            except ValueError:
-                return "END Invalid National ID.", 200
+            return "CON Enter First Name:"
 
-            password = parts[4]
+        elif len(parts) == 2:
+            first_name = parts[1].strip()
+            if not first_name.isalpha():
+                return "CON First name must contain only letters.\nEnter First Name:"
+            return "CON Enter Second Name:"
+
+        elif len(parts) == 3:
+            first_name = parts[1].strip()
+            second_name = parts[2].strip()
+            if not second_name.isalpha():
+                return "CON Second name must contain only letters.\nEnter Second Name:"
+            return "CON Enter National ID:"
+
+        elif len(parts) == 4:
+            national_id_str = parts[3].strip()
+            if not national_id_str.isdigit():
+                return "CON National ID must contain only numbers.\nEnter National ID:"
+
+            # Check if National ID already exists in database
+            existing_nid = Users.query.filter_by(national_id=national_id_str).first()
+            if existing_nid:
+                return "CON National ID already exists.\nEnter National ID:"
+
+            return "CON Set Your Password (min 6 characters):"
+
+        elif len(parts) == 5:
+            first_name = parts[1].strip()
+            second_name = parts[2].strip()
+            national_id = parts[3].strip()
+            password = parts[4].strip()
+
+            if len(password) < 6:
+                return "CON Password must be at least 6 characters.\nSet Your Password:"
+
             data = {
                 "first_name": first_name,
                 "second_name": second_name,
                 "national_id": national_id,
                 "contact": contact,
+                "email": f"{contact}@aidbridge.ussd",  # Fallback dummy email for USSD registrations if email is required
                 "password": password,
             }
 
@@ -191,9 +212,22 @@ def ussd_callback():
             ):
                 register_response = register()
                 if register_response[1] != 201:
-                    return f"END {register_response[0].json.get('error')}", 200
+                    err_msg = "Registration failed."
+                    try:
+                        res_json = register_response[0].get_json()
+                        if res_json and "errors" in res_json:
+                            # Flatten field-specific error messages from validation dictionary
+                            flat_errs = []
+                            for field_errs in res_json["errors"].values():
+                                flat_errs.extend(field_errs)
+                            err_msg = " ".join(flat_errs)
+                        elif res_json and "error" in res_json:
+                            err_msg = res_json["error"]
+                    except Exception:
+                        pass
+                    return f"END Error: {err_msg}", 200
 
-            response = "END Registration Successful. Please Login."
+            return "END Registration Successful. Please Login."
 
     # Login
     elif parts[0] == "2":

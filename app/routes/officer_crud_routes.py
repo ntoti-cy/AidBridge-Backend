@@ -327,3 +327,66 @@ def recent_activity(current_user_id):
         )
 
     return jsonify(data), 200
+
+@officer_bp.route("/sync", methods=["POST"])
+@token_required
+def sync_offline_records(current_user_id):
+
+    payload = request.get_json()
+
+    if not payload or "records" not in payload:
+        return jsonify({"error": "No records supplied"}), 400
+
+    records = payload["records"]
+
+    synced = []
+    failed = []
+
+    officer = Users.query.get(current_user_id)
+
+    if officer is None:
+        return jsonify({"error": "Officer not found"}), 404
+
+    for record in records:
+
+        token = AidTokens.query.filter_by(
+            aid_token=record["aid_token"]
+        ).first()
+
+        if token is None:
+            failed.append({
+                "aid_token": record["aid_token"],
+                "reason": "Token not found"
+            })
+            continue
+
+        if token.token_status == "used":
+            failed.append({
+                "aid_token": record["aid_token"],
+                "reason": "Already redeemed"
+            })
+            continue
+
+        # Update token
+        token.token_status = "used"
+        token.redeemed_at = datetime.utcnow()
+        token.redeemed_by = current_user_id
+
+        synced.append(record["aid_token"])
+
+        log_action(
+            officer.id,
+            "Offline Synchronization",
+            f"Synced token {record['aid_token']}"
+        )
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Synchronization completed.",
+        "synced": synced,
+        "failed": failed,
+        "total_received": len(records),
+        "total_synced": len(synced),
+        "total_failed": len(failed)
+    }), 200

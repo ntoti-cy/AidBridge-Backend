@@ -12,7 +12,6 @@ def get_admin():
     """
     Returns the currently logged-in admin.
     """
-
     admin_id = session.get("admin_id")
 
     if not admin_id:
@@ -58,7 +57,7 @@ def validate_worker(data, worker=None):
     for field in required_fields:
         if not data.get(field):
             errors.setdefault(field, []).append(
-                f"{field.replace('_', ' ').title()} is required."
+                f"{field.replace('_', ' ').Title()} is required."
             )
 
     first_name = data.get("first_name")
@@ -139,8 +138,8 @@ def create_aid_worker():
     if errors:
         return jsonify({"errors": errors}), 400
 
-    # --- NEW: Check if the distribution center is already assigned to another worker ---
-    center_id = data.get("assigned_center_id")
+    # Strict One-Worker-Per-Center Check
+    center_id = data.get("assigned_center_id") or data.get("assigned_center")
 
     if center_id:
         center = db.session.get(DistributionCenter, center_id)
@@ -158,18 +157,19 @@ def create_aid_worker():
                 jsonify(
                     {
                         "error": (
-                            f"{center.name} is already assigned to "
+                            f"'{center.aid_center_name}' is already assigned to "
                             f"{existing_officer.first_name} {existing_officer.second_name}. "
-                            "Unassign or reassign that worker first."
+                            "A distribution center can only have 1 worker at a time."
                         )
                     }
                 ),
                 409,
             )
-    # -------------------------------------------------------------------------------
+    else:
+        center_id = None
 
     hashed_password = generate_password_hash(data["password"])
-    
+
     worker = Users(
         first_name=data["first_name"].strip().title(),
         second_name=data["second_name"].strip().title(),
@@ -232,7 +232,6 @@ def create_aid_worker():
 # Get All Aid Workers
 @admin_bp.route("/aid-workers", methods=["GET"])
 def get_aid_workers():
-
     admin = get_admin()
 
     if not admin:
@@ -245,7 +244,6 @@ def get_aid_workers():
     data = []
 
     for worker in workers:
-
         center = None
 
         if worker.assigned_center_id:
@@ -283,7 +281,6 @@ def get_aid_workers():
 # Get Single Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["GET"])
 def get_aid_worker(worker_id):
-
     admin = get_admin()
 
     if not admin:
@@ -328,7 +325,6 @@ def get_aid_worker(worker_id):
 # Update Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["PUT"])
 def update_worker(worker_id):
-
     admin = get_admin()
 
     if not admin:
@@ -352,28 +348,25 @@ def update_worker(worker_id):
     old_center_id = worker.assigned_center_id
 
     try:
-
-        # Update worker information
         worker.first_name = data["first_name"].strip().title()
         worker.second_name = data["second_name"].strip().title()
         worker.national_id = data["national_id"].strip()
         worker.contact = data["contact"].strip()
         worker.email = data["email"].strip().lower()
 
-        # password update
         if data.get("password"):
             worker.password = generate_password_hash(data["password"])
 
-        # center reassignment
-        if "assigned_center_id" in data:
-
-            center_id = data.get("assigned_center_id")
+        if "assigned_center_id" in data or "assigned_center" in data:
+            center_id = (
+                data.get("assigned_center_id")
+                if "assigned_center_id" in data
+                else data.get("assigned_center")
+            )
 
             if center_id is None:
                 worker.assigned_center_id = None
-
             else:
-
                 center = db.session.get(
                     DistributionCenter,
                     center_id,
@@ -382,7 +375,6 @@ def update_worker(worker_id):
                 if not center:
                     return jsonify({"error": "Distribution Center not found"}), 404
 
-                # One-officer-per-center
                 existing_officer = Users.query.filter(
                     Users.assigned_center_id == center.id,
                     Users.role == "aid_worker",
@@ -394,9 +386,9 @@ def update_worker(worker_id):
                         jsonify(
                             {
                                 "error": (
-                                    f"{center.aid_center_name} is already assigned to "
+                                    f"'{center.aid_center_name}' is already assigned to "
                                     f"{existing_officer.first_name} {existing_officer.second_name}. "
-                                    "Unassign or reassign that worker first."
+                                    "A distribution center can only have 1 worker at a time."
                                 )
                             }
                         ),
@@ -407,36 +399,25 @@ def update_worker(worker_id):
 
         db.session.commit()
 
-        # Audit Log
         if old_center_id != worker.assigned_center_id:
-
             old_name = "None"
-
             if old_center_id:
-                old_center = db.session.get(
-                    DistributionCenter,
-                    old_center_id,
-                )
-
+                old_center = db.session.get(DistributionCenter, old_center_id)
                 if old_center:
                     old_name = old_center.aid_center_name
 
             new_name = "None"
-
             if worker.assigned_center_id:
                 new_center = db.session.get(
-                    DistributionCenter,
-                    worker.assigned_center_id,
+                    DistributionCenter, worker.assigned_center_id
                 )
-
                 if new_center:
                     new_name = new_center.aid_center_name
 
             log_action(
                 admin.id,
                 "Aid Worker Reassigned",
-                f"{worker.first_name} {worker.second_name} "
-                f"reassigned from {old_name} to {new_name}.",
+                f"{worker.first_name} {worker.second_name} reassigned from {old_name} to {new_name}.",
             )
 
         log_action(
@@ -465,9 +446,7 @@ def update_worker(worker_id):
         )
 
     except Exception as e:
-
         db.session.rollback()
-
         return (
             jsonify(
                 {
@@ -482,7 +461,6 @@ def update_worker(worker_id):
 # Delete Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["DELETE"])
 def delete_worker(worker_id):
-
     admin = get_admin()
 
     if not admin:
@@ -493,9 +471,7 @@ def delete_worker(worker_id):
     if not worker or worker.role != "aid_worker":
         return jsonify({"error": "Aid Worker not found"}), 404
 
-    # Prevent deleting an assigned worker
     if worker.assigned_center_id:
-
         center = db.session.get(
             DistributionCenter,
             worker.assigned_center_id,
@@ -505,8 +481,7 @@ def delete_worker(worker_id):
             jsonify(
                 {
                     "error": (
-                        f"Worker is assigned to "
-                        f"{center.aid_center_name}. "
+                        f"Worker is assigned to {center.aid_center_name}. "
                         "Reassign or unassign the worker before deleting."
                     )
                 }
@@ -517,7 +492,6 @@ def delete_worker(worker_id):
     worker_name = f"{worker.first_name} {worker.second_name}"
 
     try:
-
         db.session.delete(worker)
         db.session.commit()
 
@@ -527,15 +501,10 @@ def delete_worker(worker_id):
             f"{worker_name} was deleted.",
         )
 
-        return (
-            jsonify({"message": "Aid Worker deleted successfully."}),
-            200,
-        )
+        return jsonify({"message": "Aid Worker deleted successfully."}), 200
 
     except Exception as e:
-
         db.session.rollback()
-
         return (
             jsonify(
                 {
@@ -550,7 +519,6 @@ def delete_worker(worker_id):
 # Activate Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>/activate", methods=["PATCH"])
 def activate_worker(worker_id):
-
     admin = get_admin()
 
     if not admin:
@@ -565,9 +533,7 @@ def activate_worker(worker_id):
         return jsonify({"message": "Aid Worker is already active."}), 200
 
     try:
-
         worker.is_active = True
-
         db.session.commit()
 
         log_action(
@@ -587,9 +553,7 @@ def activate_worker(worker_id):
         )
 
     except Exception as e:
-
         db.session.rollback()
-
         return (
             jsonify({"error": "Failed to activate Aid Worker.", "details": str(e)}),
             500,
@@ -599,7 +563,6 @@ def activate_worker(worker_id):
 # Deactivate Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>/deactivate", methods=["PATCH"])
 def deactivate_worker(worker_id):
-
     admin = get_admin()
 
     if not admin:
@@ -614,7 +577,6 @@ def deactivate_worker(worker_id):
         return jsonify({"message": "Aid Worker is already inactive."}), 200
 
     try:
-        # Capture the center BEFORE clearing, so we can log and free it up
         vacated_center = None
         if worker.assigned_center_id:
             vacated_center = db.session.get(
@@ -622,8 +584,6 @@ def deactivate_worker(worker_id):
             )
 
         worker.is_active = False
-
-        # A deactivated worker can no longer own a center
         worker.assigned_center_id = None
 
         db.session.commit()
@@ -639,8 +599,7 @@ def deactivate_worker(worker_id):
                 admin.id,
                 "Distribution Center Unassigned",
                 f"{vacated_center.aid_center_name} was automatically unassigned "
-                f"because {worker.first_name} {worker.second_name} was deactivated. "
-                f"{'A distribution session is still active there and needs attention.' if vacated_center.is_active else ''}".strip(),
+                f"because {worker.first_name} {worker.second_name} was deactivated.",
             )
 
         return (
@@ -652,24 +611,13 @@ def deactivate_worker(worker_id):
                         "is_active": worker.is_active,
                         "assigned_center_id": worker.assigned_center_id,
                     },
-                    "vacated_center": (
-                        {
-                            "id": vacated_center.id,
-                            "aid_center_name": vacated_center.aid_center_name,
-                            "session_still_active": vacated_center.is_active,
-                        }
-                        if vacated_center
-                        else None
-                    ),
                 }
             ),
             200,
         )
 
     except Exception as e:
-
         db.session.rollback()
-
         return (
             jsonify({"error": "Failed to deactivate Aid Worker.", "details": str(e)}),
             500,
@@ -679,7 +627,6 @@ def deactivate_worker(worker_id):
 # Create Distribution Center
 @admin_bp.route("/distribution-centers", methods=["POST"])
 def create_distribution_center():
-
     admin = get_admin()
 
     if not admin:
@@ -691,23 +638,11 @@ def create_distribution_center():
         return jsonify({"error": {"general": ["Invalid request body"]}}), 400
 
     errors = {}
-
-    required_fields = [
-        "aid_center_name",
-    ]
-
-    for field in required_fields:
-        if not data.get(field):
-            errors.setdefault(field, []).append(
-                f"{field.replace('_', ' ').title()} is required."
-            )
-
     aid_center_name = data.get("aid_center_name")
-    start_time = data.get("start_time")
-    expiry_time = data.get("expiry_time")
 
-    # Check duplicate center name
-    if aid_center_name:
+    if not aid_center_name:
+        errors.setdefault("aid_center_name", []).append("Aid Center Name is required.")
+    else:
         existing = DistributionCenter.query.filter_by(
             aid_center_name=aid_center_name
         ).first()
@@ -722,8 +657,8 @@ def create_distribution_center():
 
     center = DistributionCenter(
         aid_center_name=aid_center_name,
-        start_time=start_time,
-        expiry_time=expiry_time,
+        start_time=data.get("start_time"),
+        expiry_time=data.get("expiry_time"),
     )
 
     db.session.add(center)
@@ -749,7 +684,6 @@ def create_distribution_center():
 # Get All Distribution Centers
 @admin_bp.route("/distribution-centers", methods=["GET"])
 def get_distribution_centers():
-
     admin = get_admin()
 
     if not admin:
@@ -762,8 +696,6 @@ def get_distribution_centers():
     results = []
 
     for center in centers:
-
-        # One-officer-per-center
         officer = Users.query.filter_by(
             assigned_center_id=center.id, role="aid_worker"
         ).first()
@@ -794,7 +726,6 @@ def get_distribution_centers():
 # Get One Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>", methods=["GET"])
 def get_distribution_center(center_id):
-
     admin = get_admin()
 
     if not admin:
@@ -805,7 +736,6 @@ def get_distribution_center(center_id):
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
-    # One-officer-per-center: single lookup replaces the old list/loop
     officer = Users.query.filter_by(
         assigned_center_id=center.id, role="aid_worker"
     ).first()
@@ -840,7 +770,6 @@ def get_distribution_center(center_id):
 # Activate Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>/activate", methods=["PATCH"])
 def activate_distribution_center(center_id):
-
     admin = get_admin()
 
     if not admin:
@@ -855,7 +784,6 @@ def activate_distribution_center(center_id):
         return jsonify({"message": "Distribution Center is already active."}), 200
 
     center.is_active = True
-
     db.session.commit()
 
     log_action(
@@ -894,7 +822,6 @@ def deactivate_distribution_center(center_id):
         return jsonify({"message": "Distribution Center is already inactive."}), 200
 
     try:
-        # Admin emergency shutdown: cascade expiration to active tokens
         AidTokens.query.filter_by(
             distribution_center_id=center.id,
             session_id=center.current_session_id,
@@ -940,7 +867,6 @@ def deactivate_distribution_center(center_id):
 # Delete Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>", methods=["DELETE"])
 def delete_distribution_center(center_id):
-
     admin = get_admin()
 
     if not admin:
@@ -951,7 +877,6 @@ def delete_distribution_center(center_id):
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
-    # Safety Check 1: Assigned Aid Worker only one
     assigned_officer = Users.query.filter_by(
         assigned_center_id=center.id, role="aid_worker"
     ).first()
@@ -970,7 +895,6 @@ def delete_distribution_center(center_id):
             409,
         )
 
-    # Safety Check 2: Registered Households
     assigned_households = Household.query.filter_by(center_id=center.id).count()
 
     if assigned_households > 0:

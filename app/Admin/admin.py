@@ -1,9 +1,10 @@
+import uuid
 from flask import redirect, url_for, session
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from werkzeug.security import generate_password_hash
 from app import db
-from app.models import Users, Household, DistributionCenter, AidTokens, AuditLog
+from app.models import (Users,Household,DistributionCenter,AidTokens,AuditLog,)
 from app.Admin.security import get_current_admin
 from app.Admin.dashboard import get_dashboard_data
 from app.Admin.audit import log_action
@@ -25,14 +26,25 @@ class SecureAdminIndexView(AdminIndexView):
 
 # Beneficiaries
 class BeneficiaryModelView(ModelView):
-
     can_create = False
     can_edit = True
     can_delete = False
-    
+
+    column_list = [
+        "id",
+        "first_name",
+        "second_name",
+        "national_id",
+        "contact",
+        "email",
+        "user_type",
+        "is_active",
+        "time_stamp",
+    ]
 
     form_excluded_columns = [
         "current_jti",
+        "password",
     ]
 
     def get_query(self):
@@ -47,8 +59,20 @@ class BeneficiaryModelView(ModelView):
 # Aid Workers
 class AidWorkerModelView(ModelView):
     can_create = True
-    can_edit =True
-    can_delete =True
+    can_edit = True
+    can_delete = False
+
+    column_list = [
+        "id",
+        "first_name",
+        "second_name",
+        "national_id",
+        "contact",
+        "email",
+        "assigned_center",
+        "is_active",
+        "time_stamp",
+    ]
 
     form_columns = [
         "first_name",
@@ -64,8 +88,8 @@ class AidWorkerModelView(ModelView):
     column_labels = {
         "assigned_center": "Assigned Distribution Center",
         "is_active": "Active Status",
+        "time_stamp": "Created At",
     }
-  
 
     def get_query(self):
         return self.session.query(self.model).filter(
@@ -78,34 +102,131 @@ class AidWorkerModelView(ModelView):
         )
 
     def on_model_change(self, form, model, is_created):
+        # Extract form field values into a dictionary to run validation rules
+        data = {
+            "first_name": form.first_name.data,
+            "second_name": form.second_name.data,
+            "national_id": form.national_id.data,
+            "contact": form.contact.data,
+            "email": form.email.data,
+            "password": form.password.data if is_created else None,
+        }
 
-        # Ensure role remains aid_worker
+        errors = {}
+
+        # Field validation checks
+        if not data.get("first_name"):
+            errors.setdefault("first_name", []).append("First Name is required.")
+        elif not data["first_name"].strip().isalpha():
+            errors.setdefault("first_name", []).append(
+                "First name must contain only letters."
+            )
+
+        if not data.get("second_name"):
+            errors.setdefault("second_name", []).append("Second Name is required.")
+        elif not data["second_name"].strip().isalpha():
+            errors.setdefault("second_name", []).append(
+                "Second name must contain only letters."
+            )
+
+        national_id = data.get("national_id")
+        if not national_id:
+            errors.setdefault("national_id", []).append("National ID is required.")
+        else:
+            nid_str = str(national_id).strip()
+            if not nid_str.isdigit():
+                errors.setdefault("national_id", []).append(
+                    "National ID must contain only numbers."
+                )
+            else:
+                existing_nid = Users.query.filter_by(national_id=nid_str).first()
+                if existing_nid and (not is_created or existing_nid.id != model.id):
+                    errors.setdefault("national_id", []).append(
+                        "National ID already exists."
+                    )
+
+        contact = data.get("contact")
+        if not contact:
+            errors.setdefault("contact", []).append("Contact is required.")
+        else:
+            contact_str = str(contact).strip()
+            if not contact_str.isdigit():
+                errors.setdefault("contact", []).append(
+                    "Contact must contain only numbers."
+                )
+            elif len(contact_str) < 10:
+                errors.setdefault("contact", []).append(
+                    "Contact must be at least 10 digits."
+                )
+            else:
+                existing_contact = Users.query.filter_by(contact=contact_str).first()
+                if existing_contact and (
+                    not is_created or existing_contact.id != model.id
+                ):
+                    errors.setdefault("contact", []).append("Contact already exists.")
+
+        email = data.get("email")
+        if not email:
+            errors.setdefault("email", []).append("Email is required.")
+        else:
+            email_str = email.strip().lower()
+            if "@" not in email_str or "." not in email_str:
+                errors.setdefault("email", []).append("Invalid email address.")
+            else:
+                existing_email = Users.query.filter_by(email=email_str).first()
+                if existing_email and (not is_created or existing_email.id != model.id):
+                    errors.setdefault("email", []).append("Email already exists.")
+
+        if is_created:
+            password = data.get("password")
+            if not password:
+                errors.setdefault("password", []).append("Password is required.")
+            elif len(password) < 6:
+                errors.setdefault("password", []).append(
+                    "Password must be at least 6 characters."
+                )
+
+        if errors:
+            error_messages = "; ".join(
+                [f"{k}: {', '.join(v)}" for k, v in errors.items()]
+            )
+            raise ValueError(f"Validation Error -> {error_messages}")
+
+        # One-worker-per-center validation check
+        selected_center = form.assigned_center.data
+        if selected_center:
+            existing_worker = Users.query.filter(
+                Users.assigned_center_id == selected_center.id,
+                Users.role == "aid_worker",
+                Users.id != model.id,
+            ).first()
+
+            if existing_worker:
+                raise ValueError(
+                    f"Conflict: '{selected_center.aid_center_name}' is already assigned to "
+                    f"{existing_worker.first_name} {existing_worker.second_name}. "
+                    "A distribution center can only have 1 worker at a time."
+                )
+            model.assigned_center = selected_center
+        else:
+            model.assigned_center = None
+
         model.role = "aid_worker"
-
         model.user_type = "smartphone"
 
         if is_created:
             model.requires_password_change = True
 
-        if form.assigned_center.data:
-            model.assigned_center = form.assigned_center.data
-        else:
-            model.assigned_center = None
-
-        # Hash password only if it is not already hashed
         if model.password and not model.password.startswith("pbkdf2:"):
             model.password = generate_password_hash(model.password)
 
         if is_created:
-
             log_action(
                 session.get("admin_id"),
                 "Aid Worker Created",
                 f"{model.first_name} {model.second_name} was created.",
             )
-
         else:
-
             log_action(
                 session.get("admin_id"),
                 "Aid Worker Updated",
@@ -113,7 +234,6 @@ class AidWorkerModelView(ModelView):
             )
 
     def on_model_delete(self, model):
-
         log_action(
             session.get("admin_id"),
             "Aid Worker Deleted",
@@ -123,22 +243,56 @@ class AidWorkerModelView(ModelView):
 
 # Distribution Centers
 class DistributionCenterModelView(ModelView):
-    can_create=True
-    can_edit=True
-    can_delete=False
+    can_create = True
+    can_edit = True
+    can_delete = False
+
+    form_columns = [
+        "aid_center_name",
+        "start_time",
+        "expiry_time",
+        "is_active",
+    ]
+
+    column_formatters = {
+        "workers": lambda v, c, m, p: ", ".join(
+            [
+                f"{w.first_name} {w.second_name}"
+                for w in m.workers
+                if w.role in ["aid_worker", "admin"]
+            ]
+        )
+    }
+
+    column_list = [
+        "id",
+        "aid_center_name",
+        "start_time",
+        "expiry_time",
+        "is_active",
+        "current_session_id",
+        "workers",
+    ]
+
+    column_labels = {
+        "aid_center_name": "Center Name",
+        "current_session_id": "Session ID",
+        "workers": "Assigned Aid Workers",
+    }
 
     def on_model_change(self, form, model, is_created):
+        if model.is_active and not model.current_session_id:
+            model.current_session_id = str(uuid.uuid4())
+        elif not model.is_active:
+            model.current_session_id = None
 
         if is_created:
-
             log_action(
                 session.get("admin_id"),
                 "Distribution Center Created",
                 f"{model.aid_center_name} was created.",
             )
-
         else:
-
             log_action(
                 session.get("admin_id"),
                 "Distribution Center Updated",
@@ -146,7 +300,6 @@ class DistributionCenterModelView(ModelView):
             )
 
     def on_model_delete(self, model):
-
         log_action(
             session.get("admin_id"),
             "Distribution Center Deleted",
@@ -160,6 +313,22 @@ class AidTokenModelView(ModelView):
     can_edit = False
     can_delete = False
 
+    column_list = [
+        "id",
+        "aid_token",
+        "user_id",
+        "token_status",
+        "token_issued_at",
+        "distribution_center_id",
+        "session_id",
+    ]
+
+    column_labels = {
+        "aid_token": "Token Code",
+        "user_id": "Assigned User ID",
+        "distribution_center_id": "Center ID",
+    }
+
 
 # Households
 class HouseholdModelView(ModelView):
@@ -167,18 +336,30 @@ class HouseholdModelView(ModelView):
     can_edit = True
     can_delete = False
 
+    column_list = [
+        "id",
+        "user_id",
+        "center_id",
+        "total_members",
+        "dependents_count",
+        "disability_present",
+        "income_level",
+        "is_profile_complete",
+        "vulnerability_score",
+    ]
+
 
 # Audit Logs
 class AuditLogModelView(ModelView):
-
     can_create = False
     can_edit = False
     can_delete = False
 
+    column_list = ["id", "user_id", "action", "details", "timestamp"]
+
 
 # Initialize Admin
 def init_admin(app):
-
     admin = Admin(
         app,
         name="AidBridge HQ",
