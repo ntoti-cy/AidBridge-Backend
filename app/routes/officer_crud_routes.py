@@ -252,7 +252,9 @@ def collect_aid(current_user_id):
 @officer_bp.route("/download-beneficiaries", methods=["GET"])
 @token_required
 def download_beneficiaries(current_user_id):
+    # Verify the officer exists and is assigned to a distribution center
     officer = Users.query.get(current_user_id)
+
     if not officer or not officer.assigned_center_id:
         return (
             jsonify(
@@ -263,54 +265,70 @@ def download_beneficiaries(current_user_id):
             403,
         )
 
-    # Ensure we fetch the active session specifically for THIS officer's assigned center
-    active_session = DistributionCenter.query.filter_by(
-        id=officer.assigned_center_id, is_active=True
-    ).first()
+    # Get the officer's assigned distribution center
+    center = DistributionCenter.query.get(officer.assigned_center_id)
 
-    if not active_session:
+    if not center:
+        return jsonify({"error": "Distribution center not found."}), 404
+
+    # If there is no active distribution session,
+    # return an empty list instead of an error.
+    if not center.is_active or not center.current_session_id:
         return (
             jsonify(
                 {
-                    "error": "No active distribution session found for your assigned center."
+                    "message": "No active distribution session.",
+                    "session_name": center.aid_center_name,
+                    "beneficiaries": [],
+                    "count": 0,
                 }
             ),
-            404,
+            200,
         )
 
+    # Fetch all tokens issued during the current session
     session_tokens = AidTokens.query.filter_by(
-        distribution_center_id=active_session.id,
-        session_id =active_session.current_session_id,
+        distribution_center_id=center.id,
+        session_id=center.current_session_id,
     ).all()
 
-    data = []
+    beneficiaries = []
+
     for token in session_tokens:
+
+        # Skip tokens that haven't been assigned to a beneficiary yet
+        if token.user_id is None:
+            continue
+
         user = Users.query.get(token.user_id)
         household = Household.query.filter_by(user_id=token.user_id).first()
 
-        if user:
-            data.append(
-                {
-                    "national_id": user.national_id,
-                    "name": f"{user.first_name} {user.second_name}",
-                    "aid_token": token.aid_token,
-                    "token_status": token.token_status,
-                    "total_members": household.total_members if household else 0,
-                    "dependents_count": household.dependents_count if household else 0,
-                    "income_level": household.income_level if household else 0,
-                    "disability_present": (
-                        household.disability_present if household else False
-                    ),
-                    "distribution_center": active_session.aid_center_name,
-                }
-            )
+        if not user:
+            continue
+
+        beneficiaries.append(
+            {
+                "national_id": user.national_id,
+                "name": f"{user.first_name} {user.second_name}",
+                "aid_token": token.aid_token,
+                "token_status": token.token_status,
+                "total_members": household.total_members if household else 0,
+                "dependents_count": household.dependents_count if household else 0,
+                "income_level": household.income_level if household else 0,
+                "disability_present": (
+                    household.disability_present if household else False
+                ),
+                "distribution_center": center.aid_center_name,
+            }
+        )
 
     return (
         jsonify(
             {
-                "message": "Data downloaded successfully",
-                "session_name": active_session.aid_center_name,
-                "beneficiaries": data,
+                "message": "Beneficiaries downloaded successfully.",
+                "session_name": center.aid_center_name,
+                "beneficiaries": beneficiaries,
+                "count": len(beneficiaries),
             }
         ),
         200,
