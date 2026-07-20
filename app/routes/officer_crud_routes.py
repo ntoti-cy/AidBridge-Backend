@@ -54,39 +54,56 @@ def start_distribution_session(current_user_id):
     )
 
 
-@officer_bp.route("/end-distribution-session/<int:center_id>", methods=["POST"])
+@officer_bp.route("/end-distribution-session", methods=["POST"])
 @token_required
-def end_distribution_session(current_user_id, session_id):
+def end_distribution_session(current_user_id):
+    # Verify the officer exists and is assigned to a distribution center
     worker = Users.query.get(current_user_id)
-    if not worker or not worker.assigned_center_id:
-        return jsonify({"error": "You must be assigned to a distribution center."}), 403
 
-    # Ensure the officer is only ending the session for their OWN assigned center
-    if worker.assigned_center_id != session_id:
+    if not worker or not worker.assigned_center_id:
         return (
             jsonify(
-                {
-                    "error": "Unauthorized to end session for another distribution center."
-                }
+                {"error": "You must be assigned to a distribution center."}
             ),
             403,
         )
 
-    center = DistributionCenter.query.get(session_id)
+    # Get the officer's assigned distribution center
+    center = DistributionCenter.query.get(worker.assigned_center_id)
+
     if not center:
         return jsonify({"error": "Distribution center not found."}), 404
 
+    # Ensure there is an active distribution session
     if not center.is_active:
-        return jsonify({"message": "Distribution center is already inactive."}), 200
+        return (
+            jsonify(
+                {
+                    "message": "There is no active distribution session for this center."
+                }
+            ),
+            400,
+        )
 
-    # Cascade the expiration to all active tokens for this center
-    AidTokens.query.filter_by(
-        distribution_center_id=center.id,
-        session_id=center.current_session_id,
-        token_status="active",
-    ).update({"token_status": "expired"})
+    current_session = center.current_session_id
 
+    # Expire every token belonging to the current session that has
+    # not already been redeemed or expired.
+    AidTokens.query.filter(
+        AidTokens.distribution_center_id == center.id,
+        AidTokens.session_id == current_session,
+        AidTokens.token_status.in_(["pending", "active"]),
+    ).update(
+        {"token_status": "expired"},
+        synchronize_session=False,
+    )
+
+    # Close the distribution session
     center.is_active = False
+    center.start_time = None
+    center.expiry_time = None
+    center.current_session_id = None
+
     db.session.commit()
 
     log_action(
@@ -98,12 +115,11 @@ def end_distribution_session(current_user_id, session_id):
     return (
         jsonify(
             {
-                "message": f"Distribution session for {center.aid_center_name} ended and active tokens expired."
+                "message": f"Distribution session for {center.aid_center_name} has ended successfully. All unused tokens have been expired."
             }
         ),
         200,
     )
-
 
 @officer_bp.route("/verify-token", methods=["POST"])
 @token_required
