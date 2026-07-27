@@ -2,7 +2,6 @@ import uuid
 from flask import redirect, url_for, session
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
-from werkzeug.security import generate_password_hash
 from app import db
 from app.models import (Users,Household,DistributionCenter,AidTokens,AuditLog,)
 from app.Admin.security import get_current_admin
@@ -100,138 +99,32 @@ class AidWorkerModelView(ModelView):
         return self.session.query(db.func.count(self.model.id)).filter(
             self.model.role.in_(["aid_worker", "admin"])
         )
+def on_model_change(form, model, is_created):
 
-    def on_model_change(self, form, model, is_created):
-        # Extract form field values into a dictionary to run validation rules
-        data = {
-            "first_name": form.first_name.data,
-            "second_name": form.second_name.data,
-            "national_id": form.national_id.data,
-            "contact": form.contact.data,
-            "email": form.email.data,
-            "password": form.password.data if is_created else None,
-        }
+    data = {}
 
-        errors = {}
+    for field in [
+        "first_name",
+        "second_name",
+        "national_id",
+        "contact",
+        "email",
+    ]:
+        value = getattr(form, field).data
 
-        # Field validation checks
-        if not data.get("first_name"):
-            errors.setdefault("first_name", []).append("First Name is required.")
-        elif not data["first_name"].strip().isalpha():
-            errors.setdefault("first_name", []).append(
-                "First name must contain only letters."
-            )
+        if is_created or value != getattr(model, field):
+            data[field] = value
 
-        if not data.get("second_name"):
-            errors.setdefault("second_name", []).append("Second Name is required.")
-        elif not data["second_name"].strip().isalpha():
-            errors.setdefault("second_name", []).append(
-                "Second name must contain only letters."
-            )
+    if form.password.data:
+        data["password"] = form.password.data
 
-        national_id = data.get("national_id")
-        if not national_id:
-            errors.setdefault("national_id", []).append("National ID is required.")
-        else:
-            nid_str = str(national_id).strip()
-            if not nid_str.isdigit():
-                errors.setdefault("national_id", []).append(
-                    "National ID must contain only numbers."
-                )
-            else:
-                existing_nid = Users.query.filter_by(national_id=nid_str).first()
-                if existing_nid and (not is_created or existing_nid.id != model.id):
-                    errors.setdefault("national_id", []).append(
-                        "National ID already exists."
-                    )
+    errors = validate_worker(
+        data,
+        None if is_created else model,
+    )
 
-        contact = data.get("contact")
-        if not contact:
-            errors.setdefault("contact", []).append("Contact is required.")
-        else:
-            contact_str = str(contact).strip()
-            if not contact_str.isdigit():
-                errors.setdefault("contact", []).append(
-                    "Contact must contain only numbers."
-                )
-            elif len(contact_str) < 10:
-                errors.setdefault("contact", []).append(
-                    "Contact must be at least 10 digits."
-                )
-            else:
-                existing_contact = Users.query.filter_by(contact=contact_str).first()
-                if existing_contact and (
-                    not is_created or existing_contact.id != model.id
-                ):
-                    errors.setdefault("contact", []).append("Contact already exists.")
-
-        email = data.get("email")
-        if not email:
-            errors.setdefault("email", []).append("Email is required.")
-        else:
-            email_str = email.strip().lower()
-            if "@" not in email_str or "." not in email_str:
-                errors.setdefault("email", []).append("Invalid email address.")
-            else:
-                existing_email = Users.query.filter_by(email=email_str).first()
-                if existing_email and (not is_created or existing_email.id != model.id):
-                    errors.setdefault("email", []).append("Email already exists.")
-
-        if is_created:
-            password = data.get("password")
-            if not password:
-                errors.setdefault("password", []).append("Password is required.")
-            elif len(password) < 6:
-                errors.setdefault("password", []).append(
-                    "Password must be at least 6 characters."
-                )
-
-        if errors:
-            error_messages = "; ".join(
-                [f"{k}: {', '.join(v)}" for k, v in errors.items()]
-            )
-            raise ValueError(f"Validation Error -> {error_messages}")
-
-        # One-worker-per-center validation check
-        selected_center = form.assigned_center.data
-        if selected_center:
-            existing_worker = Users.query.filter(
-                Users.assigned_center_id == selected_center.id,
-                Users.role == "aid_worker",
-                Users.id != model.id,
-            ).first()
-
-            if existing_worker:
-                raise ValueError(
-                    f"Conflict: '{selected_center.aid_center_name}' is already assigned to "
-                    f"{existing_worker.first_name} {existing_worker.second_name}. "
-                    "A distribution center can only have 1 worker at a time."
-                )
-            model.assigned_center = selected_center
-        else:
-            model.assigned_center = None
-
-        model.role = "aid_worker"
-        model.user_type = "smartphone"
-
-        if is_created:
-            model.requires_password_change = True
-
-        if model.password and not model.password.startswith("pbkdf2:"):
-            model.password = generate_password_hash(model.password)
-
-        if is_created:
-            log_action(
-                session.get("admin_id"),
-                "Aid Worker Created",
-                f"{model.first_name} {model.second_name} was created.",
-            )
-        else:
-            log_action(
-                session.get("admin_id"),
-                "Aid Worker Updated",
-                f"{model.first_name} {model.second_name} was updated.",
-            )
+    if errors:
+        raise ValueError(format_errors(errors))
 
     def on_model_delete(self, model):
         log_action(

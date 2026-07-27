@@ -27,12 +27,11 @@ def get_admin():
 
     return admin
 
-
 def validate_worker(data, worker=None):
     """
-    Validates Aid Worker data aligned with auth route validation.
-    worker=None -> Create
-    worker=Users object -> Update
+    Validates Aid Worker data.
+    worker=None -> Create (all main fields required)
+    worker=Users object -> Update (only validate fields present in data)
     """
     errors = {}
 
@@ -43,79 +42,80 @@ def validate_worker(data, worker=None):
         if isinstance(value, str):
             data[key] = value.strip()
 
-    required_fields = [
-        "first_name",
-        "second_name",
-        "national_id",
-        "contact",
-        "email",
-    ]
-
+    # 1. On CREATE, require all standard fields. On UPDATE, fields are optional (partial update).
     if worker is None:
-        required_fields.append("password")
-
-    for field in required_fields:
-        if not data.get(field):
-            errors.setdefault(field, []).append(
-                f"{field.replace('_', ' ').Title()} is required."
-            )
-
-    first_name = data.get("first_name")
-    if first_name and not first_name.isalpha():
-        errors.setdefault("first_name", []).append(
-            "First name must contain only letters."
-        )
-
-    second_name = data.get("second_name")
-    if second_name and not second_name.isalpha():
-        errors.setdefault("second_name", []).append(
-            "Second name must contain only letters."
-        )
-
-    national_id = data.get("national_id")
-    if national_id:
-        national_id_str = str(national_id)
-        if not national_id_str.isdigit():
-            errors.setdefault("national_id", []).append(
-                "National ID must contain only numbers."
-            )
-        else:
-            existing = Users.query.filter_by(national_id=national_id_str).first()
-            if existing and (worker is None or existing.id != worker.id):
-                errors.setdefault("national_id", []).append(
-                    "National ID already exists."
+        required_fields = ["first_name", "second_name", "national_id", "contact", "email", "password"]
+        for field in required_fields:
+            if not data.get(field):
+                errors.setdefault(field, []).append(
+                    f"{field.replace('_', ' ').title()} is required."
                 )
 
-    contact = data.get("contact")
-    if contact:
-        contact_str = str(contact)
-        if not contact_str.isdigit():
-            errors.setdefault("contact", []).append(
-                "Contact must contain only numbers."
-            )
-        elif len(contact_str) < 10:
-            errors.setdefault("contact", []).append(
-                "Contact must be at least 10 digits."
-            )
-        else:
-            existing = Users.query.filter_by(contact=contact_str).first()
-            if existing and (worker is None or existing.id != worker.id):
-                errors.setdefault("contact", []).append("Contact already exists.")
+    # 2. Validate first_name ONLY if provided in data
+    if "first_name" in data:
+        first_name = data.get("first_name")
+        if not first_name or not str(first_name).strip():
+            errors.setdefault("first_name", []).append("First name is required.")
+        elif not str(first_name).strip().isalpha():
+            errors.setdefault("first_name", []).append("First name must contain only letters.")
 
-    email = data.get("email")
-    if email:
-        if "@" not in email or "." not in email:
-            errors.setdefault("email", []).append("Invalid email address.")
-        else:
-            existing = Users.query.filter_by(email=email.lower()).first()
-            if existing and (worker is None or existing.id != worker.id):
-                errors.setdefault("email", []).append("Email already exists.")
+    # 3. Validate second_name ONLY if provided in data
+    if "second_name" in data:
+        second_name = data.get("second_name")
+        if not second_name or not str(second_name).strip():
+            errors.setdefault("second_name", []).append("Second name is required.")
+        elif not str(second_name).strip().isalpha():
+            errors.setdefault("second_name", []).append("Second name must contain only letters.")
 
-    password = data.get("password")
-    if worker is None and password and len(password) < 6:
-        errors.setdefault("password", []).append(
-            "Password must be at least 6 characters."
-        )
+    # 4. Validate national_id ONLY if provided in data
+    if "national_id" in data:
+        national_id = data.get("national_id")
+        if not national_id:
+            errors.setdefault("national_id", []).append("National ID is required.")
+        else:
+            national_id_str = str(national_id).strip()
+            if not national_id_str.isdigit():
+                errors.setdefault("national_id", []).append("National ID must contain only numbers.")
+            else:
+                existing = Users.query.filter_by(national_id=national_id_str).first()
+                if existing and (worker is None or existing.id != worker.id):
+                    errors.setdefault("national_id", []).append("National ID already exists.")
+
+    # 5. Validate contact ONLY if provided in data
+    if "contact" in data:
+        contact = data.get("contact")
+        if not contact:
+            errors.setdefault("contact", []).append("Contact is required.")
+        else:
+            contact_str = str(contact).strip()
+            if not contact_str.isdigit():
+                errors.setdefault("contact", []).append("Contact must contain only numbers.")
+            elif len(contact_str) < 10:
+                errors.setdefault("contact", []).append("Contact must be at least 10 digits.")
+            else:
+                existing = Users.query.filter_by(contact=contact_str).first()
+                if existing and (worker is None or existing.id != worker.id):
+                    errors.setdefault("contact", []).append("Contact already exists.")
+
+    # 6. Validate email ONLY if provided in data
+    if "email" in data:
+        email = data.get("email")
+        if not email:
+            errors.setdefault("email", []).append("Email is required.")
+        else:
+            email_str = str(email).strip().lower()
+            if "@" not in email_str or "." not in email_str:
+                errors.setdefault("email", []).append("Invalid email address.")
+            else:
+                existing = Users.query.filter_by(email=email_str).first()
+                if existing and (worker is None or existing.id != worker.id):
+                    errors.setdefault("email", []).append("Email already exists.")
+
+    # 7. Validate password ONLY if provided (or if creating)
+    if "password" in data and data.get("password"):
+        password = data.get("password")
+        if len(password) < 6:
+            errors.setdefault("password", []).append("Password must be at least 6 characters.")
 
     return errors
 
@@ -348,11 +348,21 @@ def update_worker(worker_id):
     old_center_id = worker.assigned_center_id
 
     try:
-        worker.first_name = data["first_name"].strip().title()
-        worker.second_name = data["second_name"].strip().title()
-        worker.national_id = data["national_id"].strip()
-        worker.contact = data["contact"].strip()
-        worker.email = data["email"].strip().lower()
+        # Conditionally update only fields sent in the request payload
+        if "first_name" in data and data["first_name"]:
+            worker.first_name = data["first_name"].strip().title()
+            
+        if "second_name" in data and data["second_name"]:
+            worker.second_name = data["second_name"].strip().title()
+            
+        if "national_id" in data and data["national_id"]:
+            worker.national_id = str(data["national_id"]).strip()
+            
+        if "contact" in data and data["contact"]:
+            worker.contact = str(data["contact"]).strip()
+            
+        if "email" in data and data["email"]:
+            worker.email = data["email"].strip().lower()
 
         if data.get("password"):
             worker.password = generate_password_hash(data["password"])
@@ -451,64 +461,6 @@ def update_worker(worker_id):
             jsonify(
                 {
                     "error": "Failed to update Aid Worker.",
-                    "details": str(e),
-                }
-            ),
-            500,
-        )
-
-
-# Delete Aid Worker
-@admin_bp.route("/aid-workers/<int:worker_id>", methods=["DELETE"])
-def delete_worker(worker_id):
-    admin = get_admin()
-
-    if not admin:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    worker = db.session.get(Users, worker_id)
-
-    if not worker or worker.role != "aid_worker":
-        return jsonify({"error": "Aid Worker not found"}), 404
-
-    if worker.assigned_center_id:
-        center = db.session.get(
-            DistributionCenter,
-            worker.assigned_center_id,
-        )
-
-        return (
-            jsonify(
-                {
-                    "error": (
-                        f"Worker is assigned to {center.aid_center_name}. "
-                        "Reassign or unassign the worker before deleting."
-                    )
-                }
-            ),
-            400,
-        )
-
-    worker_name = f"{worker.first_name} {worker.second_name}"
-
-    try:
-        db.session.delete(worker)
-        db.session.commit()
-
-        log_action(
-            admin.id,
-            "Aid Worker Deleted",
-            f"{worker_name} was deleted.",
-        )
-
-        return jsonify({"message": "Aid Worker deleted successfully."}), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return (
-            jsonify(
-                {
-                    "error": "Failed to delete Aid Worker.",
                     "details": str(e),
                 }
             ),
@@ -864,57 +816,3 @@ def deactivate_distribution_center(center_id):
         )
 
 
-# Delete Distribution Center
-@admin_bp.route("/distribution-centers/<int:center_id>", methods=["DELETE"])
-def delete_distribution_center(center_id):
-    admin = get_admin()
-
-    if not admin:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    center = DistributionCenter.query.get(center_id)
-
-    if not center:
-        return jsonify({"error": "Distribution Center not found."}), 404
-
-    assigned_officer = Users.query.filter_by(
-        assigned_center_id=center.id, role="aid_worker"
-    ).first()
-
-    if assigned_officer:
-        return (
-            jsonify(
-                {
-                    "error": (
-                        f"Cannot delete '{center.aid_center_name}'. "
-                        f"{assigned_officer.first_name} {assigned_officer.second_name} "
-                        "is still assigned."
-                    )
-                }
-            ),
-            409,
-        )
-
-    assigned_households = Household.query.filter_by(center_id=center.id).count()
-
-    if assigned_households > 0:
-        return (
-            jsonify(
-                {
-                    "error": (
-                        f"Cannot delete '{center.aid_center_name}'. "
-                        f"{assigned_households} household(s) are still registered."
-                    )
-                }
-            ),
-            409,
-        )
-
-    center_name = center.aid_center_name
-
-    db.session.delete(center)
-    db.session.commit()
-
-    log_action(admin.id, "Distribution Center Deleted", f"{center_name} was deleted.")
-
-    return jsonify({"message": "Distribution Center deleted successfully."}), 200
