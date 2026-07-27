@@ -107,7 +107,7 @@ def register():
     
     existing_national_id =Users.query.filter_by( national_id =national_id).first()
     if existing_national_id:
-        errors.setdefault("national-id",[]).append(
+        errors.setdefault("national_id",[]).append(
             "A User with this National ID already exists"
         )
     
