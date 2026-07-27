@@ -67,7 +67,7 @@ def validate_worker(data, worker=None):
         elif not str(second_name).strip().isalpha():
             errors.setdefault("second_name", []).append("Second name must contain only letters.")
 
-    # 4. Validate national_id ONLY if provided in data
+    # 4. Validate national_id ONLY if provided in data and has changed (or is present)
     if "national_id" in data:
         national_id = data.get("national_id")
         if not national_id:
@@ -111,14 +111,13 @@ def validate_worker(data, worker=None):
                 if existing and (worker is None or existing.id != worker.id):
                     errors.setdefault("email", []).append("Email already exists.")
 
-    # 7. Validate password ONLY if provided (or if creating)
+    # 7. Validate password ONLY if provided
     if "password" in data and data.get("password"):
         password = data.get("password")
         if len(password) < 6:
             errors.setdefault("password", []).append("Password must be at least 6 characters.")
 
     return errors
-
 
 # Create Aid Worker
 @admin_bp.route("/aid-workers", methods=["POST"])

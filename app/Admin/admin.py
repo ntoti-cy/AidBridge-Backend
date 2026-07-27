@@ -55,6 +55,8 @@ class BeneficiaryModelView(ModelView):
         )
 
 
+from werkzeug.security import generate_password_hash
+
 # Aid Workers
 class AidWorkerModelView(ModelView):
     can_create = True
@@ -99,40 +101,39 @@ class AidWorkerModelView(ModelView):
         return self.session.query(db.func.count(self.model.id)).filter(
             self.model.role.in_(["aid_worker", "admin"])
         )
-def on_model_change(form, model, is_created):
 
-    data = {}
+    def on_model_change(self, form, model, is_created):
+        """
+        Automatically runs when an admin creates or updates an Aid Worker 
+        via the Flask-Admin interface.
+        """
+        # 1. Force the role to 'aid_worker' if it's a new entry (or ensure it's protected)
+        if is_created:
+            model.role = "aid_worker"
+            model.user_type = "smartphone" # Optional, depending on your user setup
+            model.requires_password_change = True
 
-    for field in [
-        "first_name",
-        "second_name",
-        "national_id",
-        "contact",
-        "email",
-    ]:
-        value = getattr(form, field).data
+        # 2. Hash the password if a new password was provided in the form
+        if form.password.data:
+            model.password = generate_password_hash(form.password.data)
 
-        if is_created or value != getattr(model, field):
-            data[field] = value
+        # 3. Log the action to your audit logs
+        admin_id = session.get("admin_id")
+        if is_created:
+            log_action(
+                admin_id,
+                "Aid Worker Created (Admin Panel)",
+                f"{model.first_name} {model.second_name} was created via Flask-Admin."
+            )
+        else:
+            log_action(
+                admin_id,
+                "Aid Worker Updated (Admin Panel)",
+                f"{model.first_name} {model.second_name} was updated via Flask-Admin."
+            )
 
-    if form.password.data:
-        data["password"] = form.password.data
-
-    errors = validate_worker(
-        data,
-        None if is_created else model,
-    )
-
-    if errors:
-        raise ValueError(format_errors(errors))
-
-    def on_model_delete(self, model):
-        log_action(
-            session.get("admin_id"),
-            "Aid Worker Deleted",
-            f"{model.first_name} {model.second_name} was deleted.",
-        )
-
+   
+        
 
 # Distribution Centers
 class DistributionCenterModelView(ModelView):
