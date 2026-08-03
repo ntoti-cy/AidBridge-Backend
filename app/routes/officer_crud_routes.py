@@ -389,6 +389,7 @@ def sync_offline_records(current_user_id):
 
         if token is None:
             failed.append({
+                "local_id": record.get("local_id"),
                 "aid_token": record["aid_token"],
                 "reason": "Token not found"
             })
@@ -396,6 +397,7 @@ def sync_offline_records(current_user_id):
 
         if token.token_status == "used":
             failed.append({
+                "local_id": record.get("local_id"),
                 "aid_token": record["aid_token"],
                 "reason": "Already redeemed"
             })
@@ -406,7 +408,7 @@ def sync_offline_records(current_user_id):
         token.redeemed_at = datetime.utcnow()
         token.redeemed_by = current_user_id
 
-        synced.append(record["aid_token"])
+        synced.append(record["local_id"])
 
         log_action(
             officer.id,

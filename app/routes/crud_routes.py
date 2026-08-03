@@ -63,6 +63,42 @@ def change_password(current_user_id):
         200,
     )
 
+#Forgot Password
+@crud_bp.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid request body"}), 400
+
+    identifier = data.get("email") or data.get("national_id")
+    new_password = data.get("new_password")
+
+    if not identifier or not new_password:
+        return jsonify({"error": "Email/National ID and new password are required."}), 400
+
+    if len(new_password) < 6:
+        return jsonify({"error": "New password must be at least 6 characters long"}), 400
+
+    # Find user by email or national ID
+    user = Users.query.filter(
+        (Users.email == identifier) | (Users.national_id == identifier)
+    ).first()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if check_password_hash(user.password, new_password):
+        return jsonify({"error": "New password cannot be the same as the current password."}), 400
+
+    # Update password and clear forced change flag if it exists
+    user.password = generate_password_hash(new_password)
+    if hasattr(user, "requires_password_change") and user.requires_password_change:
+        user.requires_password_change = False
+
+    db.session.commit()
+
+    return jsonify({"message": "Password reset successfully."}), 200
+
 
 # User Profile
 @crud_bp.route("/me", methods=["GET"])

@@ -132,6 +132,7 @@ def ussd_callback():
                 db.session.commit()
                 parts = parts[:-2]
                 text = "*".join(parts)
+
             # Handle going back out of change password wizard
             elif session_check and session_check.current_menu == "change_password":
                 session_check.current_menu = "dashboard"
@@ -141,6 +142,22 @@ def ussd_callback():
                 db.session.commit()
                 parts = parts[:-2]
                 text = "*".join(parts)
+
+            # Handle going back out of forgot password wizard
+            elif session_check and session_check.current_menu == "forgot_password":
+                if session_check.profile_step > 1:
+                    session_check.profile_data.pop("new_password", None)
+                    flag_modified(session_check, "profile_data")
+                    session_check.profile_step -= 1
+                    session_check.last_active = datetime.utcnow()
+                    db.session.commit()
+                    parts = parts[:-2]
+                    text = "*".join(parts)
+                else:
+                    db.session.delete(session_check)
+                    db.session.commit()
+                    return "END Returning to main menu. Please dial in again.", 200
+
             else:
                 if len(parts) > 1:
                     parts = parts[:-2]
@@ -157,6 +174,7 @@ def ussd_callback():
         response += "Bridging Aid to the last Mile\n"
         response += "1.Register\n"
         response += "2.Login\n"
+        response += "3.Forgot Password\n"
         response += "9.Exit"
 
     # Registration
@@ -603,6 +621,85 @@ def ussd_callback():
 
                 else:
                     response = "END Invalid choice."
+
+
+
+
+    # Forgot Password
+    elif parts[0] == "3":
+        if len(parts) == 1:
+            user = Users.query.filter_by(contact=contact).first()
+            if not user:
+                return "END No account found with this phone number.", 200
+
+            session = get_or_create_ussd_session(session_id)
+            session.current_menu = "forgot_password"
+            session.profile_step = 1
+            session.profile_data = {}
+            session.last_active = datetime.utcnow()
+            db.session.commit()
+
+            response = "CON Enter new password (min 6 characters):\n0.Back"
+
+        elif len(parts) >= 2:
+            session = get_or_create_ussd_session(session_id)
+            if not session or session.current_menu != "forgot_password":
+                return "END Session expired. Please start again.", 200
+
+            user = Users.query.filter_by(contact=contact).first()
+            if not user:
+                return "END No account found with this phone number.", 200
+
+            if session.profile_step == 1:
+                new_password = current_answer
+
+                if len(new_password) < 6:
+                    return "END Password must be at least 6 characters.", 200
+
+                if check_password_hash(user.password, new_password):
+                    return (
+                        "END New password cannot be the same as the current password.",
+                        200,
+                    )
+
+                data = session.profile_data or {}
+                data["new_password"] = new_password
+                session.profile_data = data
+                flag_modified(session, "profile_data")
+                session.profile_step = 2
+                session.last_active = datetime.utcnow()
+                db.session.commit()
+                response = "CON Confirm new password:\n0.Back"
+
+            elif session.profile_step == 2:
+                confirm_password = current_answer
+                new_password = session.profile_data.get("new_password")
+
+                if confirm_password != new_password:
+                    return "END Passwords do not match.", 200
+
+                try:
+                    user.password = generate_password_hash(new_password)
+                    if hasattr(user, "requires_password_change") and user.requires_password_change:
+                        user.requires_password_change = False
+
+                    log_action(
+                        user.id,
+                        "Password Reset",
+                        f"{user.first_name} reset their password via USSD (forgot password).",
+                    )
+
+                    db.session.delete(session)
+                    db.session.commit()
+
+                    response = "END Password reset successfully. Please login."
+                except Exception as e:
+                    db.session.rollback()
+                    print("FORGOT PASSWORD ERROR:", e)
+                    return "END Failed to reset password. Try again later.", 200
+            else:
+                response = "END Invalid session state."
+
 
     elif parts[0] == "9":
         response = "END Thank you for trusting AidBridge."
