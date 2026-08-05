@@ -229,9 +229,13 @@ def complete_profile(current_user_id):
         200,
     )
 
-
+  # Fetch all distribution centers 
 @crud_bp.route("/get-centers", methods=["GET"])
 def get_centers():
-    # Fetch active centers
-    centers = DistributionCenter.query.filter_by(is_active=True).all()
-    return jsonify([{"id": c.id, "name": c.aid_center_name} for c in centers]), 200
+    centers = DistributionCenter.query.all()
+    
+    return jsonify([{
+        "id": c.id, 
+        "name": c.aid_center_name,
+        "is_active": getattr(c, "is_active", True)
+    } for c in centers]), 200
