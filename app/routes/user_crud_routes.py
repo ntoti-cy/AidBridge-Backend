@@ -6,6 +6,7 @@ from app.Admin.audit import log_action
 from sqlalchemy.orm.attributes import flag_modified
 from app.models import AidTokens, DistributionCenter, Household, Users, UssdSession
 from app.routes.auth_routes import register
+from app.services.sms_services import send_sms
 from app.tokens import generate_aid_token, profile_required, token_required
 
 user_bp = Blueprint(
@@ -562,9 +563,33 @@ def ussd_callback():
                             "Token Issued",
                             f"Aid token {token} issued to {user.first_name} {user.second_name}",
                         )
+                        # Build Sms Message
+                        expiry = center.session_end.strftime("%Y-%m-%d %H:%M:%S")
+                        message = (
+                            "AidBridge\n\n"
+                            f"Your aid token is: {token}\n\n"
+                            f"Distribution Centre: {center.aid_center_name}\n"
+                            f"Valid Until: {expiry}\n\n"
+                            "Present this token when collecting your aid."
+                        )
 
-                        print(f"Send SMS to {user.contact}: Your Aid Token is {token}")
-                        response = "END Token sent via SMS."
+                        # Sending SMS without interrupting token generation
+                        try:
+                            sms_result = send_sms(contact, message)
+
+                            current_app.logger.info(
+                                f"SMS sent to {contact}: {sms_result}"
+                            )
+                        except Exception as sms_error:
+                            current_app.logger.error(
+                                f"Failed to send SMS to {contact}: {sms_error}"
+                            )
+
+                        response = (
+                            "END Token generated successfully.\n"
+                            "An SMS with your token has been sent to your phone."
+                        )
+
                     except Exception:
                         db.session.rollback()
                         return "END Failed to generate token. Try again later.", 200
@@ -622,9 +647,6 @@ def ussd_callback():
                 else:
                     response = "END Invalid choice."
 
-
-
-
     # Forgot Password
     elif parts[0] == "3":
         if len(parts) == 1:
@@ -680,7 +702,10 @@ def ussd_callback():
 
                 try:
                     user.password = generate_password_hash(new_password)
-                    if hasattr(user, "requires_password_change") and user.requires_password_change:
+                    if (
+                        hasattr(user, "requires_password_change")
+                        and user.requires_password_change
+                    ):
                         user.requires_password_change = False
 
                     log_action(
@@ -699,7 +724,6 @@ def ussd_callback():
                     return "END Failed to reset password. Try again later.", 200
             else:
                 response = "END Invalid session state."
-
 
     elif parts[0] == "9":
         response = "END Thank you for trusting AidBridge."
