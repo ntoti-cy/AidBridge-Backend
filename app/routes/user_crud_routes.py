@@ -580,14 +580,17 @@ def ussd_callback():
 
                         # Sending SMS without interrupting token generation
                         try:
-                            sms_result = send_sms(user.contact, message)
+                            phone = user.contact
+                            if not phone.startswith("+"):
+                                phone = f"+{phone}"
+                            sms_result = send_sms(phone, message)
 
                             current_app.logger.info(
-                                f"SMS sent to {user.contact}: {sms_result}"
+                                f"SMS sent to {phone}: {sms_result}"
                             )
                         except Exception as sms_error:
                             current_app.logger.error(
-                                f"Failed to send SMS to {user.contact}: {sms_error}"
+                                f"Failed to send SMS to {phone}: {sms_error}"
                             )
 
                         response = (
