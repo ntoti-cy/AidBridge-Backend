@@ -128,13 +128,15 @@ def get_my_profile(current_user_id):
     dependents_count = None
     income_level = None
     disability_present = None
-    
+    vulnerability_score = None
     if household:
         is_profile_complete = household.is_profile_complete
         total_members = household.total_members
         dependents_count = household.dependents_count
         income_level = household.income_level
         disability_present = household.disability_present
+        vulnerability_score = household.vulnerability_score
+
 
     return (
         jsonify(
@@ -153,6 +155,7 @@ def get_my_profile(current_user_id):
                 "dependents_count": dependents_count,
                 "income_level": income_level,
                 "disability_present": disability_present,
+                "vulnerability_score": vulnerability_score,
             }
         ),
         200,
