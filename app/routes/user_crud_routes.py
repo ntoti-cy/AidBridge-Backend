@@ -564,7 +564,12 @@ def ussd_callback():
                             f"Aid token {token} issued to {user.first_name} {user.second_name}",
                         )
                         # Build Sms Message
-                        expiry = center.session_end.strftime("%Y-%m-%d %H:%M:%S")
+                        expiry = (
+                            center.session_end.strftime("%Y-%m-%d %H:%M:%S")
+                            if center.expiry_time
+                            else "Not specified"
+                        )
+
                         message = (
                             "AidBridge\n\n"
                             f"Your aid token is: {token}\n\n"
@@ -575,14 +580,14 @@ def ussd_callback():
 
                         # Sending SMS without interrupting token generation
                         try:
-                            sms_result = send_sms(contact, message)
+                            sms_result = send_sms(user.contact, message)
 
                             current_app.logger.info(
-                                f"SMS sent to {contact}: {sms_result}"
+                                f"SMS sent to {user.contact}: {sms_result}"
                             )
                         except Exception as sms_error:
                             current_app.logger.error(
-                                f"Failed to send SMS to {contact}: {sms_error}"
+                                f"Failed to send SMS to {user.contact}: {sms_error}"
                             )
 
                         response = (
@@ -590,8 +595,9 @@ def ussd_callback():
                             "An SMS with your token has been sent to your phone."
                         )
 
-                    except Exception:
+                    except Exception as e:
                         db.session.rollback()
+                        current_app.logger.exception(e)
                         return "END Failed to generate token. Try again later.", 200
 
                 elif choice == "2":
