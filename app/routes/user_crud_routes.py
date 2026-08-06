@@ -565,7 +565,7 @@ def ussd_callback():
                         )
                         # Build Sms Message
                         expiry = (
-                            center.expiry_time.strftime("%Y-%m-%d %H:%M:%S")
+                            center.expiry_time.strftime(" %d-%m-%Y %H:%M:%S")
                             if center.expiry_time
                             else "Not specified"
                         )
