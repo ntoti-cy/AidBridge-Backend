@@ -22,7 +22,12 @@ def start_distribution_session(current_user_id):
     center = DistributionCenter.query.get(worker.assigned_center_id)
 
     if center.is_active:
-        return jsonify({"error": "A distribution session is already active for this center."}), 400
+        return (
+            jsonify(
+                {"error": "A distribution session is already active for this center."}
+            ),
+            400,
+        )
 
     center.is_active = True
     center.start_time = datetime.utcnow()
@@ -39,7 +44,6 @@ def start_distribution_session(current_user_id):
         current_user_id,
         "Distribution Session Started",
         f"Officer {worker.first_name} {worker.second_name} started distribution session at center {center.aid_center_name}",
-       
     )
 
     return (
@@ -62,9 +66,7 @@ def end_distribution_session(current_user_id):
 
     if not worker or not worker.assigned_center_id:
         return (
-            jsonify(
-                {"error": "You must be assigned to a distribution center."}
-            ),
+            jsonify({"error": "You must be assigned to a distribution center."}),
             403,
         )
 
@@ -78,9 +80,7 @@ def end_distribution_session(current_user_id):
     if not center.is_active:
         return (
             jsonify(
-                {
-                    "message": "There is no active distribution session for this center."
-                }
+                {"message": "There is no active distribution session for this center."}
             ),
             400,
         )
@@ -120,6 +120,7 @@ def end_distribution_session(current_user_id):
         ),
         200,
     )
+
 
 @officer_bp.route("/verify-token", methods=["POST"])
 @token_required
@@ -187,6 +188,9 @@ def verify_token(current_user_id):
                     "income_level": household.income_level if household else 0,
                     "disability_present": (
                         household.disability_present if household else False
+                    ),
+                    "vulnerability_score": (
+                        household.vulnerability_score if household else 0
                     ),
                     "distribution_center": session.aid_center_name,
                     "aid_token": token.aid_token,
@@ -318,6 +322,9 @@ def download_beneficiaries(current_user_id):
                 "disability_present": (
                     household.disability_present if household else False
                 ),
+                "vulnerability_score": (
+                    household.vulnerability_score if household else 0
+                ),
                 "distribution_center": center.aid_center_name,
             }
         )
@@ -362,6 +369,7 @@ def recent_activity(current_user_id):
 
     return jsonify(data), 200
 
+
 @officer_bp.route("/sync", methods=["POST"])
 @token_required
 def sync_offline_records(current_user_id):
@@ -383,24 +391,26 @@ def sync_offline_records(current_user_id):
 
     for record in records:
 
-        token = AidTokens.query.filter_by(
-            aid_token=record["aid_token"]
-        ).first()
+        token = AidTokens.query.filter_by(aid_token=record["aid_token"]).first()
 
         if token is None:
-            failed.append({
-                "local_id": record.get("local_id"),
-                "aid_token": record["aid_token"],
-                "reason": "Token not found"
-            })
+            failed.append(
+                {
+                    "local_id": record.get("local_id"),
+                    "aid_token": record["aid_token"],
+                    "reason": "Token not found",
+                }
+            )
             continue
 
         if token.token_status == "used":
-            failed.append({
-                "local_id": record.get("local_id"),
-                "aid_token": record["aid_token"],
-                "reason": "Already redeemed"
-            })
+            failed.append(
+                {
+                    "local_id": record.get("local_id"),
+                    "aid_token": record["aid_token"],
+                    "reason": "Already redeemed",
+                }
+            )
             continue
 
         # Update token
@@ -411,18 +421,21 @@ def sync_offline_records(current_user_id):
         synced.append(record["local_id"])
 
         log_action(
-            officer.id,
-            "Offline Synchronization",
-            f"Synced token {record['aid_token']}"
+            officer.id, "Offline Synchronization", f"Synced token {record['aid_token']}"
         )
 
     db.session.commit()
 
-    return jsonify({
-        "message": "Synchronization completed.",
-        "synced": synced,
-        "failed": failed,
-        "total_received": len(records),
-        "total_synced": len(synced),
-        "total_failed": len(failed)
-    }), 200
+    return (
+        jsonify(
+            {
+                "message": "Synchronization completed.",
+                "synced": synced,
+                "failed": failed,
+                "total_received": len(records),
+                "total_synced": len(synced),
+                "total_failed": len(failed),
+            }
+        ),
+        200,
+    )
