@@ -76,8 +76,7 @@ def create_app():
 
     from app.Admin.auth import admin_auth
 
-    from app.services.test_sms import test_bp
-
+    
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
 
     app.register_blueprint(user_bp, url_prefix="/api/user")
@@ -89,8 +88,8 @@ def create_app():
     app.register_blueprint(crud_bp, url_prefix="/api/crud")
 
     app.register_blueprint(admin_auth)
-    
-    app.register_blueprint(test_bp, url_prefix="/api/test")
+
+
 
     @app.route("/")
     def home():
