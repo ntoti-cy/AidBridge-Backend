@@ -1,3 +1,5 @@
+from xml.parsers.expat import errors
+
 from flask import Blueprint, request, jsonify, current_app
 from app.models import Household, TokenBlocklist, Users
 from app import db
@@ -45,9 +47,11 @@ def register():
         ]
 
     for field in required_fields:
-        if not data.get(field):
+        value = data.get(field)
+        
+        if value is None or (isinstance(value, str) and not value.strip()):
             errors.setdefault(field, []).append(
-                f"{field.replace('_', ' ').title()} is required"
+                f"{field.replace('_', ' ').title()} is required and cannot be empty"
             )
 
     first_name = data.get("first_name")
@@ -70,23 +74,21 @@ def register():
 
     contact = data.get("contact")
     if contact:
-        contact_str = str(contact).replace("+","")
+        contact_str = str(contact).replace("+", "")
         if not contact_str.isdigit():
             errors.setdefault("contact", []).append("Contact must contain only numbers")
         elif len(contact_str) < 10:
             errors.setdefault("contact", []).append(
                 "Contact must be at least 10 digits long"
             )
-
         else:
-            data["contact"]=contact_str
+            data["contact"] = contact_str
             contact = contact_str
 
     email = data.get("email")
     if user_type == "smartphone" and email:
         if "@" not in email or "." not in email:
             errors.setdefault("email", []).append("Email must be a valid email address")
-        # Check only the Users table now
         elif Users.query.filter_by(email=email).first():
             errors.setdefault("email", []).append("Email already exists")
 
@@ -101,19 +103,18 @@ def register():
     
     existing_contact = Users.query.filter_by(contact=contact).first()
     if existing_contact:
-        errors.setdefault("contact",[]).append(
-            "A User with this phone nummber already exists"
+        errors.setdefault("contact", []).append(
+            "A User with this phone number already exists"
         )
     
-    existing_national_id =Users.query.filter_by( national_id =national_id).first()
+    existing_national_id = Users.query.filter_by(national_id=national_id).first()
     if existing_national_id:
-        errors.setdefault("national_id",[]).append(
+        errors.setdefault("national_id", []).append(
             "A User with this National ID already exists"
         )
     
     if errors:
-        return jsonify({"errors": errors}),400
-
+        return jsonify({"errors": errors}), 400
 
     hashed_password = generate_password_hash(password)
 
@@ -167,33 +168,40 @@ def login():
     contact = data.get("contact")
     password = data.get("password")
 
-    if not password:
-        errors.setdefault("password", []).append("Password is required")
+    # Validate password not empty
+    if password is None or (isinstance(password, str) and not password.strip()):
+        errors.setdefault("password", []).append("Password is required and cannot be empty")
     elif len(password) < 6:
         errors.setdefault("password", []).append(
             "Password must be at least 6 characters long"
         )
 
-    if email and ("@" not in email or "." not in email):
-        errors.setdefault("email", []).append("Email must be a valid email address")
-    if contact and not str(contact).isdigit():
-        errors.setdefault("contact", []).append("Contact must be a valid number")
+    is_email_empty = email is None or (isinstance(email, str) and not email.strip())
+    is_contact_empty = contact is None or (isinstance(contact, str) and not contact.strip())
+
+    if is_email_empty and is_contact_empty:
+        errors.setdefault("general", []).append("Either email or contact is required")
+    else:
+        if not is_email_empty:
+            if "@" not in email or "." not in email:
+                errors.setdefault("email", []).append("Email must be a valid email address")
+        if not is_contact_empty:
+            if not str(contact).isdigit():
+                errors.setdefault("contact", []).append("Contact must be a valid number")
 
     if errors:
         return jsonify({"error": errors}), 400
 
     user = None
 
-    # Simplified search: Just search the Users table by either email or contact
-    if email:
+    if email and not is_email_empty:
         user = Users.query.filter_by(email=email).first()
-    elif contact:
+    elif contact and not is_contact_empty:
         user = Users.query.filter_by(contact=contact).first()
 
     if not user or not check_password_hash(user.password, password):
         return jsonify({"error": {"general": ["Invalid credentials"]}}), 401
 
-    # Extract details directly from the single user object
     user_role = user.role
     user_type = user.user_type
     must_change_password = user.requires_password_change
@@ -250,7 +258,6 @@ def login():
             "is_profile_complete": is_profile_complete,
         }
     )
-
 
 # LOGOUT
 @auth_bp.route("/logout", methods=["POST"])
