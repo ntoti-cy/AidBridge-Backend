@@ -176,27 +176,27 @@ def login():
             "Password must be at least 6 characters long"
         )
 
-    is_email_empty = email is None or (isinstance(email, str) and not email.strip())
+    if email is None or (isinstance(email, str) and not email.strip()):
+        errors.setdefault("email", []).append(
+            "Email is required"
+        )
+    elif "@" not in email or "." not in email:
+        errors.setdefault("email", []).append(
+            "Email must be a valid email address"
+        )
+    
+
     is_contact_empty = contact is None or (isinstance(contact, str) and not contact.strip())
 
-    if is_email_empty and is_contact_empty:
-        errors.setdefault("general", []).append("Either email or contact is required")
-    else:
-        if not is_email_empty:
-            if "@" not in email or "." not in email:
-                errors.setdefault("email", []).append("Email must be a valid email address")
-        if not is_contact_empty:
+   
+    if not is_contact_empty:
             if not str(contact).isdigit():
                 errors.setdefault("contact", []).append("Contact must be a valid number")
 
     if errors:
         return jsonify({"error": errors}), 400
-
-    user = None
-
-    if email and not is_email_empty:
-        user = Users.query.filter_by(email=email).first()
-    elif contact and not is_contact_empty:
+    
+    if contact and not is_contact_empty:
         user = Users.query.filter_by(contact=contact).first()
 
     if not user or not check_password_hash(user.password, password):
@@ -204,7 +204,7 @@ def login():
 
     user_role = user.role
     user_type = user.user_type
-    must_change_password = user.requires_password_change
+    # must_change_password = user.requires_password_change
 
     session_jti = str(uuid.uuid4())
     user.current_jti = session_jti
