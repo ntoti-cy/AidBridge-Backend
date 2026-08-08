@@ -87,7 +87,9 @@ def register():
 
     email = data.get("email")
     if user_type == "smartphone" and email:
-        if "@" not in email or "." not in email:
+        if email is None or (isinstance(email, str) and not email.strip()):
+            errors.setdefault("email", []).append("Email is required and cannot be empty")
+        elif "@" not in email or "." not in email:
             errors.setdefault("email", []).append("Email must be a valid email address")
         elif Users.query.filter_by(email=email).first():
             errors.setdefault("email", []).append("Email already exists")

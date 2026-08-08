@@ -69,22 +69,38 @@ def get_or_create_ussd_session(session_id):
     return session
 
 
-def get_ussd_centers_menu():
-    centers = (
-        DistributionCenter.query.filter_by(is_active=True)
-        .order_by(DistributionCenter.id)
-        .all()
-    )
+def get_ussd_centers_menu(page=1, per_page=4):
+    query = DistributionCenter.query.order_by(DistributionCenter.id)
+    total_centers = query.count()
 
-    if not centers:
-        return None, "END No active distribution centers available."
+    if total_centers == 0:
+        return None, "END No distribution centers available.", 0
 
-    menu = "CON Select Distribution Center:\n"
+    total_pages = (total_centers + per_page - 1) // per_page
+    if page < 1:
+        page = 1
+    elif page > total_pages:
+        page = total_pages
 
-    for index, center in enumerate(centers, start=1):
-        menu += f"{index}. {center.aid_center_name}\n"
+    centers = query.offset((page - 1) * per_page).limit(per_page).all()
 
-    return centers, menu
+    menu = f"CON Select Distribution Center (Page {page}/{total_pages}):\n"
+    
+    for i, center in enumerate(centers, start=1):
+        # Optional: Append a small indicator if the center is inactive
+        status_suffix = "" if center.is_active else " (Inactive)"
+        menu += f"{i}. {center.aid_center_name}{status_suffix}\n"
+
+    nav_options = []
+    if page < total_pages:
+        nav_options.append("#. Next Page")
+    if page > 1:
+        nav_options.append("0. Back")
+    else:
+        nav_options.append("0. Cancel")
+
+    menu += "\n".join(nav_options)
+    return centers, menu, total_pages
 
 
 # USSD
@@ -455,7 +471,37 @@ def ussd_callback():
 
                     elif session.profile_step == 5:
                         try:
-                            centers, _ = get_ussd_centers_menu()
+                            profile = session.profile_data or {}
+                            current_page = profile.get("center_page", 1)
+                            centers, menu, total_pages = get_ussd_centers_menu(page=current_page)
+
+                            if not centers:
+                                return menu, 200
+
+                            if current_answer == "#" and current_page < total_pages:
+                                profile["center_page"] = current_page + 1
+                                session.profile_data = profile
+                                flag_modified(session, "profile_data")
+                                session.last_active = datetime.utcnow()
+                                db.session.commit()
+                                _, next_menu, _ = get_ussd_centers_menu(page=current_page + 1)
+                                return menu + "0.Back", 200
+
+                            elif current_answer == "0":
+                                if current_page > 1:
+                                    profile["center_page"] = current_page - 1
+                                    session.profile_data = profile
+                                    flag_modified(session, "profile_data")
+                                    session.last_active = datetime.utcnow()
+                                    db.session.commit()
+                                    _, prev_menu, _ = get_ussd_centers_menu(page=current_page - 1)
+                                    return prev_menu + "0.Back", 200
+                                else:
+                                    session.profile_step = 4    
+                                    session.last_active = datetime.utcnow()
+                                    db.session.commit()
+                                    return "CON Enter estimated monthly income (KES):\n0.Back", 200
+                                
                             selected = int(current_answer) - 1
                             if selected < 0 or selected >= len(centers):
                                 return "END Invalid distribution center.", 200
