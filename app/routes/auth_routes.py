@@ -167,7 +167,6 @@ def login():
             data[key] = value.strip()
 
     email = data.get("email")
-    contact = data.get("contact")
     password = data.get("password")
 
     # Validate password not empty
@@ -180,34 +179,24 @@ def login():
 
     if email is None or (isinstance(email, str) and not email.strip()):
         errors.setdefault("email", []).append(
-            "Email is required"
+            "Email is required and cannot be empty"
         )
     elif "@" not in email or "." not in email:
         errors.setdefault("email", []).append(
             "Email must be a valid email address"
         )
     
-
-    is_contact_empty = contact is None or (isinstance(contact, str) and not contact.strip())
-
-   
-    if not is_contact_empty:
-            if not str(contact).isdigit():
-                errors.setdefault("contact", []).append("Contact must be a valid number")
-
     if errors:
         return jsonify({"error": errors}), 400
-    
-    if contact and not is_contact_empty:
-        user = Users.query.filter_by(contact=contact).first()
+
+    user = Users.query.filter_by(email=email).first()
 
     if not user or not check_password_hash(user.password, password):
         return jsonify({"error": {"general": ["Invalid credentials"]}}), 401
 
     user_role = user.role
     user_type = user.user_type
-    # must_change_password = user.requires_password_change
-
+    
     session_jti = str(uuid.uuid4())
     user.current_jti = session_jti
     db.session.commit()
