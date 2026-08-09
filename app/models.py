@@ -1,5 +1,7 @@
+from app.utilis.timezone import now_eat
+
 from . import db
-from datetime import datetime
+
 
 
 class Users(db.Model):
@@ -22,7 +24,7 @@ class Users(db.Model):
     is_active = db.Column(db.Boolean, default=True)
 
     current_jti = db.Column(db.String(120))  # for JWT tracking
-    time_stamp = db.Column(db.DateTime, default=datetime.utcnow)
+    time_stamp = db.Column(db.DateTime(timezone =True), default=now_eat)
 
     def __repr__(self):
         return f"<User {self.first_name}>"
@@ -34,7 +36,7 @@ class AidTokens(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("Users.id"))
     aid_token = db.Column(db.String(100), unique=True, nullable=False)
     token_status = db.Column(db.String(20), default="inactive")
-    token_issued_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
+    token_issued_at = db.Column(db.DateTime(timezone =True), default=now_eat, nullable=True)
     distribution_center_id = db.Column(
         db.Integer, db.ForeignKey("distribution_centers.id"), nullable=True
     )
@@ -49,7 +51,7 @@ class TokenBlocklist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     jti = db.Column(db.String(150), unique=True, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("Users.id"))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone =True), default=now_eat)
 
     def __repr__(self):
         return f"<Token {self.jti}>"
@@ -64,7 +66,7 @@ class UssdSession(db.Model):
     current_menu = db.Column(db.String(50), default="main")
     profile_step = db.Column(db.Integer, default=0)
     profile_data = db.Column(db.JSON, default=dict)
-    last_active = db.Column(db.DateTime, default=datetime.utcnow)
+    last_active = db.Column(db.DateTime(timezone =True), default=now_eat)
 
     def __repr__(self):
         return f"<Session {self.session_id}>"
@@ -74,8 +76,8 @@ class DistributionCenter(db.Model):
     __tablename__ = "distribution_centers"
     id = db.Column(db.Integer, primary_key=True)
     aid_center_name = db.Column(db.String(150), nullable=False)
-    start_time = db.Column(db.DateTime, default=datetime.utcnow)
-    expiry_time = db.Column(db.DateTime, nullable=True)
+    start_time = db.Column(db.DateTime(timezone =True), default=now_eat)
+    expiry_time = db.Column(db.DateTime(timezone =True), nullable=True)
     is_active = db.Column(db.Boolean, default=False)
     current_session_id = db.Column(db.String(36), nullable=True)
 
@@ -89,7 +91,7 @@ class AuditLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("Users.id"))
     action = db.Column(db.String(200), nullable=False)
     details = db.Column(db.String(500), nullable=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime(timezone =True), default=now_eat)
 
     def __repr__(self):
         return f"<AuditLog {self.action}>"
