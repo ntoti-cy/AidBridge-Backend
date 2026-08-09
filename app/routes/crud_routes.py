@@ -1,3 +1,4 @@
+import datetime
 import re
 
 from flask import Blueprint, request, jsonify
@@ -63,21 +64,37 @@ def change_password(current_user_id):
         200,
     )
 
-#Forgot Password
+
+# Forgot Password
 @crud_bp.route("/forgot-password", methods=["POST"])
 def forgot_password():
     data = request.get_json()
     if not data:
         return jsonify({"error": "Invalid request body"}), 400
 
-    identifier = data.get("email") or data.get("national_id")
+    email = data.get("email")
+    national_id = data.get("national_id")
+
+    if email:
+        email = email.strip().lower()
+
+    if national_id:
+        national_id = national_id.strip()
+
+    identifier = email or national_id
     new_password = data.get("new_password")
 
     if not identifier or not new_password:
-        return jsonify({"error": "Email/National ID and new password are required."}), 400
+        return (
+            jsonify({"error": "Email/National ID and new password are required."}),
+            400,
+        )
 
     if len(new_password) < 6:
-        return jsonify({"error": "New password must be at least 6 characters long"}), 400
+        return (
+            jsonify({"error": "New password must be at least 6 characters long"}),
+            400,
+        )
 
     # Find user by email or national ID
     user = Users.query.filter(
@@ -88,7 +105,12 @@ def forgot_password():
         return jsonify({"error": "User not found"}), 404
 
     if check_password_hash(user.password, new_password):
-        return jsonify({"error": "New password cannot be the same as the current password."}), 400
+        return (
+            jsonify(
+                {"error": "New password cannot be the same as the current password."}
+            ),
+            400,
+        )
 
     # Update password and clear forced change flag if it exists
     user.password = generate_password_hash(new_password)
@@ -114,7 +136,7 @@ def get_my_profile(current_user_id):
     assigned_center_id = None
 
     # 1. Check if the user is an officer with a direct center assignment
-    if hasattr(user, 'assigned_center_id') and user.assigned_center_id:
+    if hasattr(user, "assigned_center_id") and user.assigned_center_id:
         assigned_center_id = user.assigned_center_id
         center = DistributionCenter.query.get(assigned_center_id)
 
@@ -138,6 +160,14 @@ def get_my_profile(current_user_id):
         vulnerability_score = household.vulnerability_score
 
 
+    center_is_active = False    
+    center_expiry_time = None
+    if center:
+        center_is_active = center.is_active
+
+    if center and center.expiry_time:
+        center_expiry_time = center.expiry_time.isoformat()
+
     return (
         jsonify(
             {
@@ -151,6 +181,8 @@ def get_my_profile(current_user_id):
                 "requires_password_change": user.requires_password_change,
                 "assigned_center_id": assigned_center_id,
                 "assigned_center_name": center.aid_center_name if center else None,
+                "center_is_active": center_is_active,
+                "center_expiry_time": center_expiry_time,
                 "total_members": total_members,
                 "dependents_count": dependents_count,
                 "income_level": income_level,
@@ -209,7 +241,7 @@ def complete_profile(current_user_id):
     center_id = data.get("center_id")
     if center_id:
         household.center_id = center_id
-        user.assigned_center_id =center_id
+        user.assigned_center_id = center_id
 
     if household.total_members < 1:
         return jsonify({"error": "Total members must be at least 1."}), 400
@@ -232,13 +264,22 @@ def complete_profile(current_user_id):
         200,
     )
 
-  # Fetch all distribution centers 
+
+# Fetch all distribution centers
 @crud_bp.route("/get-centers", methods=["GET"])
 def get_centers():
     centers = DistributionCenter.query.all()
-    
-    return jsonify([{
-        "id": c.id, 
-        "name": c.aid_center_name,
-        "is_active": getattr(c, "is_active", True)
-    } for c in centers]), 200
+
+    return (
+        jsonify(
+            [
+                {
+                    "id": c.id,
+                    "name": c.aid_center_name,
+                    "is_active": getattr(c, "is_active", True),
+                }
+                for c in centers
+            ]
+        ),
+        200,
+    )
