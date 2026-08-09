@@ -4,7 +4,8 @@ from app.Admin.audit import log_action
 from app.models import AidTokens, AuditLog, DistributionCenter, Household, Users
 from app import db
 from datetime import datetime
-from app.tokens import generate_aid_token, token_required
+from app.tokens import token_required
+from app.utilis.timezone import make_eat, now_eat
 
 officer_bp = Blueprint("officer_bp", __name__)
 
@@ -30,13 +31,14 @@ def start_distribution_session(current_user_id):
         )
 
     center.is_active = True
-    center.start_time = datetime.utcnow()
+    center.start_time = now_eat()
     center.current_session_id = str(uuid.uuid4())
     center.expiry_time = None
 
     expiry_time_str = request.json.get("expiry_time")
     if expiry_time_str:
-        center.expiry_time = datetime.strptime(expiry_time_str, "%Y-%m-%d %H:%M:%S")
+        naive_expiry_time = datetime.strptime(expiry_time_str, "%Y-%m-%d %H:%M:%S")
+        center.expiry_time = make_eat(naive_expiry_time)
 
     db.session.commit()
 
