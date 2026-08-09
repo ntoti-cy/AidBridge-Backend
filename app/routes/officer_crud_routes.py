@@ -5,6 +5,7 @@ from app.models import AidTokens, AuditLog, DistributionCenter, Household, Users
 from app import db
 from datetime import datetime
 from app.tokens import token_required
+from app.utilis.sessions import auto_expire_session
 from app.utilis.timezone import make_eat, now_eat
 
 officer_bp = Blueprint("officer_bp", __name__)
@@ -21,6 +22,8 @@ def start_distribution_session(current_user_id):
             403,
         )
     center = DistributionCenter.query.get(worker.assigned_center_id)
+
+    auto_expire_session(center)
 
     if center.is_active:
         return (
@@ -156,6 +159,7 @@ def verify_token(current_user_id):
         )
 
     # Automatic expiry check
+    auto_expire_session(session)
     if session.expiry_time and session.expiry_time < datetime.utcnow():
         token.token_status = "expired"
         db.session.commit()
@@ -226,6 +230,8 @@ def collect_aid(current_user_id):
         )
 
     center = DistributionCenter.query.get(token.distribution_center_id)
+
+    auto_expire_session(center)
     if not center or token.session_id != center.current_session_id:
         return (
             jsonify(

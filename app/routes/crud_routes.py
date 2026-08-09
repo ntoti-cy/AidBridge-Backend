@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from app.models import DistributionCenter, Household, Users
 from app import db
 from app.tokens import token_required
+from app.utilis.sessions import auto_expire_session
 
 crud_bp = Blueprint("crud_bp", __name__)
 
@@ -145,6 +146,11 @@ def get_my_profile(current_user_id):
         assigned_center_id = household.center_id
         center = DistributionCenter.query.get(household.center_id)
 
+
+    if center:
+        auto_expire_session(center)
+             
+
     is_profile_complete = False
     total_members = None
     dependents_count = None
@@ -159,7 +165,7 @@ def get_my_profile(current_user_id):
         disability_present = household.disability_present
         vulnerability_score = household.vulnerability_score
 
-
+  
     center_is_active = False    
     center_expiry_time = None
     if center:

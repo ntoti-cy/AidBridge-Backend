@@ -4,6 +4,7 @@ from werkzeug.security import generate_password_hash
 from app import db
 from app.models import AidTokens, Users, Household, DistributionCenter
 from app.Admin.audit import log_action
+from app.utilis.sessions import auto_expire_session
 
 admin_bp = Blueprint("admin_bp", __name__)
 
@@ -684,6 +685,8 @@ def get_distribution_center(center_id):
 
     center = DistributionCenter.query.get(center_id)
 
+    auto_expire_session(center)
+
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
@@ -727,6 +730,8 @@ def activate_distribution_center(center_id):
         return jsonify({"error": "Unauthorized"}), 401
 
     center = DistributionCenter.query.get(center_id)
+
+    auto_expire_session(center)
 
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
