@@ -3,7 +3,13 @@ from flask import redirect, url_for, session
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from app import db
-from app.models import (Users,Household,DistributionCenter,AidTokens,AuditLog,)
+from app.models import (
+    Users,
+    Household,
+    DistributionCenter,
+    AidTokens,
+    AuditLog,
+)
 from app.Admin.security import get_current_admin
 from app.Admin.dashboard import get_dashboard_data
 from app.Admin.audit import log_action
@@ -58,6 +64,7 @@ class BeneficiaryModelView(ModelView):
 
 from werkzeug.security import generate_password_hash
 
+
 # Aid Workers
 class AidWorkerModelView(ModelView):
     can_create = True
@@ -105,7 +112,7 @@ class AidWorkerModelView(ModelView):
 
     def on_model_change(self, form, model, is_created):
         """
-        Automatically runs when an admin creates or updates an Aid Worker 
+        Automatically runs when an admin creates or updates an Aid Worker
         via the Flask-Admin interface.
         """
         if is_created:
@@ -121,17 +128,15 @@ class AidWorkerModelView(ModelView):
             log_action(
                 admin_id,
                 "Aid Worker Created (Admin Panel)",
-                f"{model.first_name} {model.second_name} was created via Flask-Admin."
+                f"{model.first_name} {model.second_name} was created via Flask-Admin.",
             )
         else:
             log_action(
                 admin_id,
                 "Aid Worker Updated (Admin Panel)",
-                f"{model.first_name} {model.second_name} was updated via Flask-Admin."
+                f"{model.first_name} {model.second_name} was updated via Flask-Admin.",
             )
 
-   
-        
 
 # Distribution Centers
 class DistributionCenterModelView(ModelView):
@@ -148,13 +153,21 @@ class DistributionCenterModelView(ModelView):
     ]
 
     column_formatters = {
+        "start_time": lambda v, c, m, p: (
+            make_eat(m.start_time).strftime("%Y-%m-%d %I:%M %p") if m.start_time else ""
+        ),
+        "expiry_time": lambda v, c, m, p: (
+            make_eat(m.expiry_time).strftime("%Y-%m-%d %I:%M %p")
+            if m.expiry_time
+            else ""
+        ),
         "workers": lambda v, c, m, p: ", ".join(
             [
                 f"{w.first_name} {w.second_name}"
                 for w in m.workers
                 if w.role in ["aid_worker", "admin"]
             ]
-        )
+        ),
     }
 
     column_list = [
@@ -175,11 +188,9 @@ class DistributionCenterModelView(ModelView):
 
     def on_model_change(self, form, model, is_created):
 
-
         if model.start_time:
             if model.start_time.tzinfo is None:
                 model.start_time = make_eat(model.start_time)
-
 
         if model.expiry_time:
             if model.expiry_time.tzinfo is None:

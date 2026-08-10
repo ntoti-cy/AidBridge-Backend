@@ -1,8 +1,8 @@
 from flask import session
-from datetime import datetime, date
-
-from app import db  # Added db import to resolve database function errors
+from datetime import date
+from app import db  
 from app.models import Users, Household, DistributionCenter, AidTokens, AuditLog
+from app.utilis.timezone import now_eat
 
 
 def get_dashboard_data():
@@ -107,7 +107,7 @@ def get_dashboard_data():
     # Return Dashboard Data Dictionary
     return {
         "admin_name": session.get("admin_name"),
-        "now": datetime.now(),
+        "now": now_eat(),
         # Core Statistics
         "registered_beneficiaries": registered_beneficiaries,
         "aid_workers": aid_workers,
