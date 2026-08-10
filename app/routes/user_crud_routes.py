@@ -1,4 +1,3 @@
-from datetime import datetime
 from flask import Blueprint, current_app, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
 from app import db
@@ -8,6 +7,7 @@ from app.models import AidTokens, DistributionCenter, Household, Users, UssdSess
 from app.routes.auth_routes import register
 from app.services.sms_services import send_sms
 from app.tokens import generate_aid_token, profile_required, token_required
+from app.utilis.timezone import now_eat
 
 user_bp = Blueprint(
     "user_bp",
@@ -30,7 +30,7 @@ def get_user_active_center(user_id):
             "Aid collection is not currently open at your distribution center.",
         )
 
-    if center.expiry_time and center.expiry_time < datetime.utcnow():
+    if center.expiry_time and center.expiry_time<= now_eat():
         return None, "Aid collection has ended at your distribution center."
 
     return center, None
@@ -42,7 +42,7 @@ def get_or_create_ussd_session(session_id):
     if (
         session
         and session.last_active
-        and (datetime.utcnow() - session.last_active).total_seconds() > 300
+        and (now_eat() - session.last_active).total_seconds() > 300
     ):
         db.session.delete(session)
         db.session.commit()
@@ -54,13 +54,13 @@ def get_or_create_ussd_session(session_id):
             current_menu="main",
             profile_step=0,
             profile_data={},
-            last_active=datetime.utcnow(),
+            last_active=now_eat(),
         )
 
         db.session.add(session)
         db.session.commit()
     else:
-        session.last_active = datetime.utcnow()
+        session.last_active = now_eat()
 
         if session.profile_data is None:
             session.profile_data = {}
@@ -121,7 +121,7 @@ def ussd_callback():
             if (
                 session_check
                 and session_check.last_active
-                and (datetime.utcnow() - session_check.last_active).total_seconds()
+                and (now_eat () - session_check.last_active).total_seconds()
                 > 300
             ):
                 db.session.delete(session_check)
@@ -145,7 +145,7 @@ def ussd_callback():
 
                 flag_modified(session_check, "profile_data")
                 session_check.profile_step -= 1
-                session_check.last_active = datetime.utcnow()
+                session_check.last_active = now_eat()
                 db.session.commit()
                 parts = parts[:-2]
                 text = "*".join(parts)
@@ -155,7 +155,7 @@ def ussd_callback():
                 session_check.current_menu = "dashboard"
                 session_check.profile_step = 0
                 session_check.profile_data = {}
-                session_check.last_active = datetime.utcnow()
+                session_check.last_active = now_eat()
                 db.session.commit()
                 parts = parts[:-2]
                 text = "*".join(parts)
@@ -166,7 +166,7 @@ def ussd_callback():
                     session_check.profile_data.pop("new_password", None)
                     flag_modified(session_check, "profile_data")
                     session_check.profile_step -= 1
-                    session_check.last_active = datetime.utcnow()
+                    session_check.last_active = now_eat()
                     db.session.commit()
                     parts = parts[:-2]
                     text = "*".join(parts)
@@ -285,7 +285,7 @@ def ussd_callback():
             session.current_menu = "dashboard"
             session.profile_step = 0
             session.profile_data = {}
-            session.last_active = datetime.utcnow()
+            session.last_active = now_eat()
             db.session.commit()
 
             household = Household.query.filter_by(user_id=user.id).first()
@@ -322,7 +322,7 @@ def ussd_callback():
                         session.profile_data = {"old_password_verified": True}
                         flag_modified(session, "profile_data")
                         session.profile_step = 2
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         db.session.commit()
                         return "CON Enter new password:\n0.Back", 200
 
@@ -342,7 +342,7 @@ def ussd_callback():
                         session.profile_data = data
                         flag_modified(session, "profile_data")
                         session.profile_step = 3
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         db.session.commit()
                         return "CON Confirm new password:\n0.Back", 200
 
@@ -357,7 +357,7 @@ def ussd_callback():
                         session.current_menu = "dashboard"
                         session.profile_step = 0
                         session.profile_data = {}
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         flag_modified(session, "profile_data")
                         session.authenticated = False
                         db.session.commit()
@@ -381,14 +381,14 @@ def ussd_callback():
                     if not household:
                         household = Household(user_id=user.id)
                         db.session.add(household)
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         db.session.commit()
 
                     if session.profile_step == 0:
                         session.current_menu = "profile"
                         session.profile_step = 1
                         session.profile_data = {}
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         db.session.commit()
                         response = "CON Enter total household members:\n0.Back"
 
@@ -403,7 +403,7 @@ def ussd_callback():
                             session.profile_data = data
                             flag_modified(session, "profile_data")
                             session.profile_step = 2
-                            session.last_active = datetime.utcnow()
+                            session.last_active = now_eat()
                             db.session.commit()
                             response = "CON Enter number of dependents:\n0.Back"
                         except ValueError:
@@ -427,7 +427,7 @@ def ussd_callback():
                             session.profile_data = data
                             flag_modified(session, "profile_data")
                             session.profile_step = 3
-                            session.last_active = datetime.utcnow()
+                            session.last_active = now_eat()
                             db.session.commit()
                             response = "CON Disability present?\n1.Yes\n2.No\n0.Back"
                         except ValueError:
@@ -443,7 +443,7 @@ def ussd_callback():
                         session.profile_data = data
                         flag_modified(session, "profile_data")
                         session.profile_step = 4
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         db.session.commit()
                         response = "CON Enter estimated monthly income (KES):\n0.Back"
 
@@ -458,7 +458,7 @@ def ussd_callback():
                             session.profile_data = data
                             flag_modified(session, "profile_data")
                             session.profile_step = 5
-                            session.last_active = datetime.utcnow()
+                            session.last_active = now_eat()
                             db.session.commit()
 
                             centers, menu = get_ussd_centers_menu()
@@ -482,7 +482,7 @@ def ussd_callback():
                                 profile["center_page"] = current_page + 1
                                 session.profile_data = profile
                                 flag_modified(session, "profile_data")
-                                session.last_active = datetime.utcnow()
+                                session.last_active = now_eat()
                                 db.session.commit()
                                 _, next_menu, _ = get_ussd_centers_menu(page=current_page + 1)
                                 return menu + "0.Back", 200
@@ -492,13 +492,13 @@ def ussd_callback():
                                     profile["center_page"] = current_page - 1
                                     session.profile_data = profile
                                     flag_modified(session, "profile_data")
-                                    session.last_active = datetime.utcnow()
+                                    session.last_active = now_eat()
                                     db.session.commit()
                                     _, prev_menu, _ = get_ussd_centers_menu(page=current_page - 1)
                                     return prev_menu + "0.Back", 200
                                 else:
                                     session.profile_step = 4    
-                                    session.last_active = datetime.utcnow()
+                                    session.last_active = now_eat()
                                     db.session.commit()
                                     return "CON Enter estimated monthly income (KES):\n0.Back", 200
                                 
@@ -539,7 +539,7 @@ def ussd_callback():
                             session.profile_step = 0
                             session.current_menu = "dashboard"
                             session.profile_data = {}
-                            session.last_active = datetime.utcnow()
+                            session.last_active = now_eat()
                             db.session.commit()
 
                             log_action(
@@ -596,12 +596,12 @@ def ussd_callback():
                             user_id=user.id,
                             aid_token=token,
                             token_status="active",
-                            token_issued_at=datetime.utcnow(),
+                            token_issued_at=now_eat(),
                             distribution_center_id=center.id,
                             session_id=center.current_session_id,
                         )
                         db.session.add(new_token)
-                        session.last_active = datetime.utcnow()
+                        session.last_active = now_eat()
                         db.session.commit()
 
                         log_action(
@@ -690,7 +690,7 @@ def ussd_callback():
                 elif choice == "4":
                     session.current_menu = "change_password"
                     session.profile_step = 1
-                    session.last_active = datetime.utcnow()
+                    session.last_active = now_eat()
                     db.session.commit()
                     response = "CON Enter current password:\n0.Back"
 
@@ -713,7 +713,7 @@ def ussd_callback():
             session.current_menu = "forgot_password"
             session.profile_step = 1
             session.profile_data = {}
-            session.last_active = datetime.utcnow()
+            session.last_active = now_eat()
             db.session.commit()
 
             response = "CON Enter new password (min 6 characters):\n0.Back"
@@ -744,7 +744,7 @@ def ussd_callback():
                 session.profile_data = data
                 flag_modified(session, "profile_data")
                 session.profile_step = 2
-                session.last_active = datetime.utcnow()
+                session.last_active = now_eat()
                 db.session.commit()
                 response = "CON Confirm new password:\n0.Back"
 
@@ -857,7 +857,7 @@ def request_smartphone_token(current_user_id):
             user_id=user.id,
             aid_token=token_string,
             token_status="active",
-            token_issued_at=datetime.utcnow(),
+            token_issued_at=now_eat(),
             distribution_center_id=center.id,
             session_id=center.current_session_id,
         )
