@@ -1,19 +1,17 @@
-from xml.parsers.expat import errors
-
 from flask import Blueprint, request, jsonify, current_app
 from app.models import Household, TokenBlocklist, Users
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
-import datetime
 import uuid
 import jwt
+from datetime import datetime, timedelta
 from app.Admin.audit import log_action
 from app.tokens import token_required
+from app.utilis.timezone import now_eat
 
 auth_bp = Blueprint("auth_bp", __name__)
 
 
-# REGISTER
 @auth_bp.route("/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -48,7 +46,6 @@ def register():
 
     for field in required_fields:
         value = data.get(field)
-        
         if value is None or (isinstance(value, str) and not value.strip()):
             errors.setdefault(field, []).append(
                 f"{field.replace('_', ' ').title()} is required and cannot be empty"
@@ -56,21 +53,15 @@ def register():
 
     first_name = data.get("first_name")
     if first_name and not first_name.isalpha():
-        errors.setdefault("first_name", []).append(
-            "First name must contain only letters"
-        )
+        errors.setdefault("first_name", []).append("First name must contain only letters")
 
     second_name = data.get("second_name")
     if second_name and not second_name.isalpha():
-        errors.setdefault("second_name", []).append(
-            "Second name must contain only letters"
-        )
+        errors.setdefault("second_name", []).append("Second name must contain only letters")
 
     national_id = data.get("national_id")
     if national_id and not str(national_id).isdigit():
-        errors.setdefault("national_id", []).append(
-            "National ID must contain only numbers"
-        )
+        errors.setdefault("national_id", []).append("National ID must contain only numbers")
 
     contact = data.get("contact")
     if contact:
@@ -78,9 +69,7 @@ def register():
         if not contact_str.isdigit():
             errors.setdefault("contact", []).append("Contact must contain only numbers")
         elif len(contact_str) < 10:
-            errors.setdefault("contact", []).append(
-                "Contact must be at least 10 digits long"
-            )
+            errors.setdefault("contact", []).append("Contact must be at least 10 digits long")
         else:
             data["contact"] = contact_str
             contact = contact_str
@@ -96,24 +85,18 @@ def register():
 
     password = data.get("password")
     if password and len(password) < 6:
-        errors.setdefault("password", []).append(
-            "Password must be at least 6 characters long"
-        )
+        errors.setdefault("password", []).append("Password must be at least 6 characters long")
 
     if errors:
         return jsonify({"error": errors}), 400
     
     existing_contact = Users.query.filter_by(contact=contact).first()
     if existing_contact:
-        errors.setdefault("contact", []).append(
-            "A User with this phone number already exists"
-        )
+        errors.setdefault("contact", []).append("A User with this phone number already exists")
     
     existing_national_id = Users.query.filter_by(national_id=national_id).first()
     if existing_national_id:
-        errors.setdefault("national_id", []).append(
-            "A User with this National ID already exists"
-        )
+        errors.setdefault("national_id", []).append("A User with this National ID already exists")
     
     if errors:
         return jsonify({"errors": errors}), 400
@@ -153,7 +136,6 @@ def register():
     )
 
 
-# LOGIN
 @auth_bp.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -169,22 +151,15 @@ def login():
     email = data.get("email")
     password = data.get("password")
 
-    # Validate password not empty
     if password is None or (isinstance(password, str) and not password.strip()):
         errors.setdefault("password", []).append("Password is required and cannot be empty")
     elif len(password) < 6:
-        errors.setdefault("password", []).append(
-            "Password must be at least 6 characters long"
-        )
+        errors.setdefault("password", []).append("Password must be at least 6 characters long")
 
     if email is None or (isinstance(email, str) and not email.strip()):
-        errors.setdefault("email", []).append(
-            "Email is required and cannot be empty"
-        )
+        errors.setdefault("email", []).append("Email is required and cannot be empty")
     elif "@" not in email or "." not in email:
-        errors.setdefault("email", []).append(
-            "Email must be a valid email address"
-        )
+        errors.setdefault("email", []).append("Email must be a valid email address")
     
     if errors:
         return jsonify({"error": errors}), 400
@@ -207,13 +182,14 @@ def login():
         f"{user.first_name} {user.second_name} logged in Successfully",
     )
 
+    current_time_eat = now_eat()
     access_token = jwt.encode(
         {
             "user_id": user.id,
             "role": user_role,
             "jti": session_jti,
             "type": "access",
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+            "exp": current_time_eat + timedelta(hours=1),
         },
         current_app.config["SECRET_KEY"],
         algorithm="HS256",
@@ -225,16 +201,14 @@ def login():
             "role": user_role,
             "jti": session_jti,
             "type": "refresh",
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(days=10),
+            "exp": current_time_eat + timedelta(days=10),
         },
         current_app.config["SECRET_KEY"],
         algorithm="HS256",
     )
 
     household = Household.query.filter_by(user_id=user.id).first()
-    is_profile_complete = False
-    if household:
-        is_profile_complete = household.is_profile_complete
+    is_profile_complete = household.is_profile_complete if household else False
 
     return jsonify(
         {
@@ -250,7 +224,7 @@ def login():
         }
     )
 
-# LOGOUT
+
 @auth_bp.route("/logout", methods=["POST"])
 @token_required
 def logout(current_user_id):
@@ -263,9 +237,7 @@ def logout(current_user_id):
     revoked_token = TokenBlocklist(jti=session_jti, user_id=current_user_id)
     db.session.add(revoked_token)
 
-    # Query only Users table
     user = Users.query.get(current_user_id)
-
     if user:
         user.current_jti = None
 
@@ -273,7 +245,6 @@ def logout(current_user_id):
     return jsonify({"message": "Successfully logged out. Tokens revoked."}), 200
 
 
-# REFRESH TOKEN
 @auth_bp.route("/refresh", methods=["POST"])
 def refresh():
     auth_header = request.headers.get("Authorization")
@@ -285,44 +256,30 @@ def refresh():
     try:
         data = jwt.decode(token, current_app.config["SECRET_KEY"], algorithms=["HS256"])
         if data.get("type") != "refresh":
-            return (
-                jsonify({"error": "Invalid token type. Must be a refresh token."}),
-                401,
-            )
+            return jsonify({"error": "Invalid token type. Must be a refresh token."}), 401
 
         user_id = data.get("user_id")
         session_jti = data.get("jti")
         user_role = data.get("role")
 
         if TokenBlocklist.query.filter_by(jti=session_jti).first():
-            return (
-                jsonify({"error": "Session has been revoked. Please log in again."}),
-                401,
-            )
+            return jsonify({"error": "Session has been revoked. Please log in again."}), 401
 
-        # Query only Users table
         user = Users.query.get(user_id)
-
         if not user:
             return jsonify({"error": "User not found."}), 404
 
         if user.current_jti != session_jti:
-            return (
-                jsonify(
-                    {
-                        "error": "Session invalid. You may have logged in on another device."
-                    }
-                ),
-                401,
-            )
+            return jsonify({"error": "Session invalid. You may have logged in on another device."}), 401
 
+        current_time_eat = now_eat()
         new_access_token = jwt.encode(
             {
                 "user_id": user.id,
                 "role": user_role,
                 "jti": session_jti,
                 "type": "access",
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+                "exp": current_time_eat + timedelta(hours=1),
             },
             current_app.config["SECRET_KEY"],
             algorithm="HS256",
@@ -334,7 +291,7 @@ def refresh():
                 "role": user_role,
                 "jti": session_jti,
                 "type": "refresh",
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(days=10),
+                "exp": current_time_eat + timedelta(days=10),
             },
             current_app.config["SECRET_KEY"],
             algorithm="HS256",
@@ -350,7 +307,6 @@ def refresh():
             ),
             200,
         )
-
     except jwt.ExpiredSignatureError:
         return jsonify({"error": "Refresh token expired. Please log in again."}), 401
     except jwt.InvalidTokenError:

@@ -1,40 +1,53 @@
 from app import db
-from app.models import AidTokens, DistributionCenter
-from app.Admin.audit import log_action
+from app.models import DistributionCenter, AidTokens
 from app.utilis.timezone import now_eat
 
 
-def auto_expire_session(center: DistributionCenter):
-    #end session if the expiry time has passed
-    if not center or not center.is_active or not center.expiry_time:
+def auto_expire_session(center):
+    if not center:
         return False
 
-    if center.expiry_time >= now_eat():
+    # Nothing to expire
+    if not center.is_active:
         return False
 
-    current_session = center.current_session_id
+    # No expiry configured
+    if not center.expiry_time:
+        return False
 
-    AidTokens.query.filter(
-        AidTokens.distribution_center_id == center.id,
-        AidTokens.session_id == current_session,
-        AidTokens.token_status.in_(["pending", "active"]),
-    ).update(
-        {"token_status": "expired"},
-        synchronize_session=False,
-    )
+    current_time = now_eat()
 
+    # Make sure both datetimes are timezone-aware
+    expiry_time = center.expiry_time
+
+    if expiry_time.tzinfo is None:
+        from app.utilis.timezone import make_eat
+        expiry_time = make_eat(expiry_time)
+
+    # Session has not expired yet
+    if current_time < expiry_time:
+        return False
+
+    # Save the session ID before clearing it
+    current_session_id = center.current_session_id
+
+    # Expire all unused tokens from this session
+    if current_session_id:
+        AidTokens.query.filter(
+            AidTokens.distribution_center_id == center.id,
+            AidTokens.session_id == current_session_id,
+            AidTokens.token_status.in_(["pending", "active"]),
+        ).update(
+            {"token_status": "expired"},
+            synchronize_session=False,
+        )
+
+    # End the session
     center.is_active = False
     center.start_time = None
     center.expiry_time = None
     center.current_session_id = None
 
     db.session.commit()
-
-    log_action(
-        None,
-        "Distribution Session Auto-Expired",
-        f"Session for {center.aid_center_name} was automatically ended "
-        f"because its expiry time was reached.",
-    )
 
     return True

@@ -5,37 +5,22 @@ from app import db
 from app.models import AidTokens, Users, Household, DistributionCenter
 from app.Admin.audit import log_action
 from app.utilis.sessions import auto_expire_session
+from app.utilis.timezone import make_eat
 
 admin_bp = Blueprint("admin_bp", __name__)
 
 
 def get_admin():
-    """
-    Returns the currently logged-in admin.
-    """
     admin_id = session.get("admin_id")
-
     if not admin_id:
         return None
-
     admin = db.session.get(Users, admin_id)
-
-    if not admin:
+    if not admin or admin.role != "admin":
         return None
-
-    if admin.role != "admin":
-        return None
-
     return admin
 
 def validate_worker(data, worker=None):
-    """
-    Validates Aid Worker data.
-    worker=None -> Create (all main fields required)
-    worker=Users object -> Update (only validate fields present in data)
-    """
     errors = {}
-
     if not data:
         return {"general": ["Invalid Request Body"]}
 
@@ -43,7 +28,6 @@ def validate_worker(data, worker=None):
         if isinstance(value, str):
             data[key] = value.strip()
 
-    # 1. On CREATE, require all standard fields. On UPDATE, fields are optional (partial update).
     if worker is None:
         required_fields = ["first_name", "second_name", "national_id", "contact", "email", "password"]
         for field in required_fields:
@@ -52,7 +36,6 @@ def validate_worker(data, worker=None):
                     f"{field.replace('_', ' ').title()} is required."
                 )
 
-    # 2. Validate first_name ONLY if provided in data
     if "first_name" in data:
         first_name = data.get("first_name")
         if not first_name or not str(first_name).strip():
@@ -60,7 +43,6 @@ def validate_worker(data, worker=None):
         elif not str(first_name).strip().isalpha():
             errors.setdefault("first_name", []).append("First name must contain only letters.")
 
-    # 3. Validate second_name ONLY if provided in data
     if "second_name" in data:
         second_name = data.get("second_name")
         if not second_name or not str(second_name).strip():
@@ -68,7 +50,6 @@ def validate_worker(data, worker=None):
         elif not str(second_name).strip().isalpha():
             errors.setdefault("second_name", []).append("Second name must contain only letters.")
 
-    # 4. Validate national_id ONLY if provided in data and has changed (or is present)
     if "national_id" in data:
         national_id = data.get("national_id")
         if not national_id:
@@ -82,7 +63,6 @@ def validate_worker(data, worker=None):
                 if existing and (worker is None or existing.id != worker.id):
                     errors.setdefault("national_id", []).append("National ID already exists.")
 
-    # 5. Validate contact ONLY if provided in data
     if "contact" in data:
         contact = data.get("contact")
         if not contact:
@@ -98,7 +78,6 @@ def validate_worker(data, worker=None):
                 if existing and (worker is None or existing.id != worker.id):
                     errors.setdefault("contact", []).append("Contact already exists.")
 
-    # 6. Validate email ONLY if provided in data
     if "email" in data:
         email = data.get("email")
         if not email:
@@ -112,7 +91,6 @@ def validate_worker(data, worker=None):
                 if existing and (worker is None or existing.id != worker.id):
                     errors.setdefault("email", []).append("Email already exists.")
 
-    # 7. Validate password ONLY if provided
     if "password" in data and data.get("password"):
         password = data.get("password")
         if len(password) < 6:
@@ -120,30 +98,23 @@ def validate_worker(data, worker=None):
 
     return errors
 
-# Create Aid Worker
 @admin_bp.route("/aid-workers", methods=["POST"])
 def create_aid_worker():
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json()
-
     if not data:
         return jsonify({"error": "Invalid request body"}), 400
 
     errors = validate_worker(data)
-
     if errors:
         return jsonify({"errors": errors}), 400
 
-    # Strict One-Worker-Per-Center Check
     center_id = data.get("assigned_center_id") or data.get("assigned_center")
-
     if center_id:
         center = db.session.get(DistributionCenter, center_id)
-
         if not center:
             return jsonify({"error": "Distribution Center not found"}), 404
 
@@ -169,7 +140,6 @@ def create_aid_worker():
         center_id = None
 
     hashed_password = generate_password_hash(data["password"])
-
     worker = Users(
         first_name=data["first_name"].strip().title(),
         second_name=data["second_name"].strip().title(),
@@ -187,13 +157,11 @@ def create_aid_worker():
     try:
         db.session.add(worker)
         db.session.commit()
-
         log_action(
             admin.id,
             "Aid Worker Created",
             f"{worker.first_name} {worker.second_name} created successfully.",
         )
-
         return (
             jsonify(
                 {
@@ -211,47 +179,29 @@ def create_aid_worker():
             ),
             201,
         )
-
     except IntegrityError:
         db.session.rollback()
         return jsonify({"error": "Worker already exists."}), 409
-
     except Exception as e:
         db.session.rollback()
         return (
-            jsonify(
-                {
-                    "error": "Failed to create Aid Worker.",
-                    "details": str(e),
-                }
-            ),
+            jsonify({"error": "Failed to create Aid Worker.", "details": str(e)}),
             500,
         )
 
 
-# Get All Aid Workers
 @admin_bp.route("/aid-workers", methods=["GET"])
 def get_aid_workers():
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
-    workers = (
-        Users.query.filter_by(role="aid_worker").order_by(Users.first_name.asc()).all()
-    )
-
+    workers = Users.query.filter_by(role="aid_worker").order_by(Users.first_name.asc()).all()
     data = []
-
     for worker in workers:
         center = None
-
         if worker.assigned_center_id:
-            center = db.session.get(
-                DistributionCenter,
-                worker.assigned_center_id,
-            )
-
+            center = db.session.get(DistributionCenter, worker.assigned_center_id)
         data.append(
             {
                 "id": worker.id,
@@ -266,38 +216,22 @@ def get_aid_workers():
                 "requires_password_change": worker.requires_password_change,
             }
         )
-
-    return (
-        jsonify(
-            {
-                "count": len(data),
-                "workers": data,
-            }
-        ),
-        200,
-    )
+    return jsonify({"count": len(data), "workers": data}), 200
 
 
-# Get Single Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["GET"])
 def get_aid_worker(worker_id):
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     worker = db.session.get(Users, worker_id)
-
     if not worker or worker.role != "aid_worker":
         return jsonify({"error": "Aid Worker not found"}), 404
 
     center = None
-
     if worker.assigned_center_id:
-        center = db.session.get(
-            DistributionCenter,
-            worker.assigned_center_id,
-        )
+        center = db.session.get(DistributionCenter, worker.assigned_center_id)
 
     return (
         jsonify(
@@ -322,48 +256,37 @@ def get_aid_worker(worker_id):
     )
 
 
-# Update Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>", methods=["PUT"])
 def update_worker(worker_id):
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     worker = db.session.get(Users, worker_id)
-
     if not worker or worker.role != "aid_worker":
         return jsonify({"error": "Aid Worker not found"}), 404
 
     data = request.get_json()
-
     if not data:
         return jsonify({"error": "Invalid request body"}), 400
 
     errors = validate_worker(data, worker)
-
     if errors:
         return jsonify({"errors": errors}), 400
 
     old_center_id = worker.assigned_center_id
 
     try:
-        # Conditionally update only fields sent in the request payload
         if "first_name" in data and data["first_name"]:
             worker.first_name = data["first_name"].strip().title()
-            
         if "second_name" in data and data["second_name"]:
             worker.second_name = data["second_name"].strip().title()
-            
         if "national_id" in data and data["national_id"]:
             worker.national_id = str(data["national_id"]).strip()
-            
         if "contact" in data and data["contact"]:
             worker.contact = str(data["contact"]).strip()
-            
         if "email" in data and data["email"]:
             worker.email = data["email"].strip().lower()
-
         if data.get("password"):
             worker.password = generate_password_hash(data["password"])
 
@@ -377,11 +300,7 @@ def update_worker(worker_id):
             if center_id is None:
                 worker.assigned_center_id = None
             else:
-                center = db.session.get(
-                    DistributionCenter,
-                    center_id,
-                )
-
+                center = db.session.get(DistributionCenter, center_id)
                 if not center:
                     return jsonify({"error": "Distribution Center not found"}), 404
 
@@ -418,9 +337,7 @@ def update_worker(worker_id):
 
             new_name = "None"
             if worker.assigned_center_id:
-                new_center = db.session.get(
-                    DistributionCenter, worker.assigned_center_id
-                )
+                new_center = db.session.get(DistributionCenter, worker.assigned_center_id)
                 if new_center:
                     new_name = new_center.aid_center_name
 
@@ -454,30 +371,18 @@ def update_worker(worker_id):
             ),
             200,
         )
-
     except Exception as e:
         db.session.rollback()
-        return (
-            jsonify(
-                {
-                    "error": "Failed to update Aid Worker.",
-                    "details": str(e),
-                }
-            ),
-            500,
-        )
+        return jsonify({"error": "Failed to update Aid Worker.", "details": str(e)}), 500
 
 
-# Activate Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>/activate", methods=["PATCH"])
 def activate_worker(worker_id):
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     worker = db.session.get(Users, worker_id)
-
     if not worker or worker.role != "aid_worker":
         return jsonify({"error": "Aid Worker not found"}), 404
 
@@ -487,13 +392,11 @@ def activate_worker(worker_id):
     try:
         worker.is_active = True
         db.session.commit()
-
         log_action(
             admin.id,
             "Aid Worker Activated",
             f"{worker.first_name} {worker.second_name} was activated.",
         )
-
         return (
             jsonify(
                 {
@@ -503,25 +406,18 @@ def activate_worker(worker_id):
             ),
             200,
         )
-
     except Exception as e:
         db.session.rollback()
-        return (
-            jsonify({"error": "Failed to activate Aid Worker.", "details": str(e)}),
-            500,
-        )
+        return jsonify({"error": "Failed to activate Aid Worker.", "details": str(e)}), 500
 
 
-# Deactivate Aid Worker
 @admin_bp.route("/aid-workers/<int:worker_id>/deactivate", methods=["PATCH"])
 def deactivate_worker(worker_id):
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     worker = db.session.get(Users, worker_id)
-
     if not worker or worker.role != "aid_worker":
         return jsonify({"error": "Aid Worker not found"}), 404
 
@@ -531,13 +427,10 @@ def deactivate_worker(worker_id):
     try:
         vacated_center = None
         if worker.assigned_center_id:
-            vacated_center = db.session.get(
-                DistributionCenter, worker.assigned_center_id
-            )
+            vacated_center = db.session.get(DistributionCenter, worker.assigned_center_id)
 
         worker.is_active = False
         worker.assigned_center_id = None
-
         db.session.commit()
 
         log_action(
@@ -567,50 +460,52 @@ def deactivate_worker(worker_id):
             ),
             200,
         )
-
     except Exception as e:
         db.session.rollback()
-        return (
-            jsonify({"error": "Failed to deactivate Aid Worker.", "details": str(e)}),
-            500,
-        )
+        return jsonify({"error": "Failed to deactivate Aid Worker.", "details": str(e)}), 500
 
 
-# Create Distribution Center
 @admin_bp.route("/distribution-centers", methods=["POST"])
 def create_distribution_center():
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json()
-
     if not data:
         return jsonify({"error": {"general": ["Invalid request body"]}}), 400
 
     errors = {}
     aid_center_name = data.get("aid_center_name")
-
     if not aid_center_name:
         errors.setdefault("aid_center_name", []).append("Aid Center Name is required.")
     else:
-        existing = DistributionCenter.query.filter_by(
-            aid_center_name=aid_center_name
-        ).first()
-
+        existing = DistributionCenter.query.filter_by(aid_center_name=aid_center_name).first()
         if existing:
-            errors.setdefault("aid_center_name", []).append(
-                "Distribution Center already exists."
-            )
+            errors.setdefault("aid_center_name", []).append("Distribution Center already exists.")
 
     if errors:
         return jsonify({"error": errors}), 400
 
+    start_time = data.get("start_time")
+    expiry_time = data.get("expiry_time")
+    
+    if start_time and isinstance(start_time, str):
+        try:
+            start_time = make_eat(datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            pass
+            
+    if expiry_time and isinstance(expiry_time, str):
+        try:
+            expiry_time = make_eat(datetime.strptime(expiry_time, "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            pass
+
     center = DistributionCenter(
         aid_center_name=aid_center_name,
-        start_time=data.get("start_time"),
-        expiry_time=data.get("expiry_time"),
+        start_time=start_time,
+        expiry_time=expiry_time,
     )
 
     db.session.add(center)
@@ -622,38 +517,20 @@ def create_distribution_center():
         f"{center.aid_center_name} was created.",
     )
 
-    return (
-        jsonify(
-            {
-                "message": "Distribution Center created successfully.",
-                "center_id": center.id,
-            }
-        ),
-        201,
-    )
+    return jsonify({"message": "Distribution Center created successfully.", "center_id": center.id}), 201
 
 
-# Get All Distribution Centers
 @admin_bp.route("/distribution-centers", methods=["GET"])
 def get_distribution_centers():
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
-    centers = DistributionCenter.query.order_by(
-        DistributionCenter.aid_center_name
-    ).all()
-
+    centers = DistributionCenter.query.order_by(DistributionCenter.aid_center_name).all()
     results = []
-
     for center in centers:
-        officer = Users.query.filter_by(
-            assigned_center_id=center.id, role="aid_worker"
-        ).first()
-
+        officer = Users.query.filter_by(assigned_center_id=center.id, role="aid_worker").first()
         households_count = Household.query.filter_by(center_id=center.id).count()
-
         results.append(
             {
                 "id": center.id,
@@ -671,29 +548,22 @@ def get_distribution_centers():
                 "households": households_count,
             }
         )
-
     return jsonify(results), 200
 
 
-# Get One Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>", methods=["GET"])
 def get_distribution_center(center_id):
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     center = DistributionCenter.query.get(center_id)
-
-    auto_expire_session(center)
-
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
 
-    officer = Users.query.filter_by(
-        assigned_center_id=center.id, role="aid_worker"
-    ).first()
+    auto_expire_session(center)
 
+    officer = Users.query.filter_by(assigned_center_id=center.id, role="aid_worker").first()
     households_count = Household.query.filter_by(center_id=center.id).count()
 
     return (
@@ -721,20 +591,17 @@ def get_distribution_center(center_id):
     )
 
 
-# Activate Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>/activate", methods=["PATCH"])
 def activate_distribution_center(center_id):
     admin = get_admin()
-
     if not admin:
         return jsonify({"error": "Unauthorized"}), 401
 
     center = DistributionCenter.query.get(center_id)
-
-    auto_expire_session(center)
-
     if not center:
         return jsonify({"error": "Distribution Center not found."}), 404
+
+    auto_expire_session(center)
 
     if center.is_active:
         return jsonify({"message": "Distribution Center is already active."}), 200
@@ -763,7 +630,6 @@ def activate_distribution_center(center_id):
     )
 
 
-# Deactivate Distribution Center
 @admin_bp.route("/distribution-centers/<int:center_id>/deactivate", methods=["PATCH"])
 def deactivate_distribution_center(center_id):
     admin = get_admin()
@@ -806,17 +672,6 @@ def deactivate_distribution_center(center_id):
             ),
             200,
         )
-
     except Exception as e:
         db.session.rollback()
-        return (
-            jsonify(
-                {
-                    "error": "Failed to deactivate Distribution Center.",
-                    "details": str(e),
-                }
-            ),
-            500,
-        )
-
-
+        return jsonify({"error": "Failed to deactivate Distribution Center.", "details": str(e)}), 500

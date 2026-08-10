@@ -1,6 +1,4 @@
-import datetime
 import re
-
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from app.models import DistributionCenter, Household, Users
@@ -15,7 +13,6 @@ crud_bp = Blueprint("crud_bp", __name__)
 @token_required
 def change_password(current_user_id):
     data = request.get_json()
-
     if not data:
         return jsonify({"error": "Invalid request body"}), 400
 
@@ -23,13 +20,9 @@ def change_password(current_user_id):
     new_password = data.get("new_password")
 
     if not new_password or len(new_password) < 6:
-        return (
-            jsonify({"error": "New password must be at least 6 characters long"}),
-            400,
-        )
+        return jsonify({"error": "New password must be at least 6 characters long"}), 400
 
     user = Users.query.get(current_user_id)
-
     if not user:
         return jsonify({"error": "User not found"}), 404
 
@@ -37,36 +30,22 @@ def change_password(current_user_id):
 
     if not is_forced_change:
         if not old_password:
-            return (
-                jsonify({"error": "Old password is required to change your password."}),
-                400,
-            )
+            return jsonify({"error": "Old password is required to change your password."}), 400
 
         if not check_password_hash(user.password, old_password):
             return jsonify({"error": "Incorrect old password."}), 401
 
     if check_password_hash(user.password, new_password):
-        return (
-            jsonify(
-                {"error": "New password cannot be the same as the current password."}
-            ),
-            400,
-        )
+        return jsonify({"error": "New password cannot be the same as the current password."}), 400
 
     user.password = generate_password_hash(new_password)
-
     if user.role == "aid_worker":
         user.requires_password_change = False
 
     db.session.commit()
-
-    return (
-        jsonify({"message": "Password updated successfully.", "role": user.role}),
-        200,
-    )
+    return jsonify({"message": "Password updated successfully.", "role": user.role}), 200
 
 
-# Forgot Password
 @crud_bp.route("/forgot-password", methods=["POST"])
 def forgot_password():
     data = request.get_json()
@@ -78,7 +57,6 @@ def forgot_password():
 
     if email:
         email = email.strip().lower()
-
     if national_id:
         national_id = national_id.strip()
 
@@ -86,18 +64,11 @@ def forgot_password():
     new_password = data.get("new_password")
 
     if not identifier or not new_password:
-        return (
-            jsonify({"error": "Email/National ID and new password are required."}),
-            400,
-        )
+        return jsonify({"error": "Email/National ID and new password are required."}), 400
 
     if len(new_password) < 6:
-        return (
-            jsonify({"error": "New password must be at least 6 characters long"}),
-            400,
-        )
+        return jsonify({"error": "New password must be at least 6 characters long"}), 400
 
-    # Find user by email or national ID
     user = Users.query.filter(
         (Users.email == identifier) | (Users.national_id == identifier)
     ).first()
@@ -106,24 +77,16 @@ def forgot_password():
         return jsonify({"error": "User not found"}), 404
 
     if check_password_hash(user.password, new_password):
-        return (
-            jsonify(
-                {"error": "New password cannot be the same as the current password."}
-            ),
-            400,
-        )
+        return jsonify({"error": "New password cannot be the same as the current password."}), 400
 
-    # Update password and clear forced change flag if it exists
     user.password = generate_password_hash(new_password)
     if hasattr(user, "requires_password_change") and user.requires_password_change:
         user.requires_password_change = False
 
     db.session.commit()
-
     return jsonify({"message": "Password reset successfully."}), 200
 
 
-# User Profile
 @crud_bp.route("/me", methods=["GET"])
 @token_required
 def get_my_profile(current_user_id):
@@ -132,47 +95,28 @@ def get_my_profile(current_user_id):
         return jsonify({"error": "User profile not found"}), 404
 
     household = Household.query.filter_by(user_id=user.id).first()
-
     center = None
     assigned_center_id = None
 
-    # 1. Check if the user is an officer with a direct center assignment
     if hasattr(user, "assigned_center_id") and user.assigned_center_id:
         assigned_center_id = user.assigned_center_id
         center = DistributionCenter.query.get(assigned_center_id)
-
-    # 2. Fallback to household center assignment if not found (for beneficiaries)
     elif household and household.center_id:
         assigned_center_id = household.center_id
         center = DistributionCenter.query.get(household.center_id)
 
-
     if center:
         auto_expire_session(center)
-             
 
-    is_profile_complete = False
-    total_members = None
-    dependents_count = None
-    income_level = None
-    disability_present = None
-    vulnerability_score = None
-    if household:
-        is_profile_complete = household.is_profile_complete
-        total_members = household.total_members
-        dependents_count = household.dependents_count
-        income_level = household.income_level
-        disability_present = household.disability_present
-        vulnerability_score = household.vulnerability_score
+    is_profile_complete = household.is_profile_complete if household else False
+    total_members = household.total_members if household else None
+    dependents_count = household.dependents_count if household else None
+    income_level = household.income_level if household else None
+    disability_present = household.disability_present if household else None
+    vulnerability_score = household.vulnerability_score if household else None
 
-  
-    center_is_active = False    
-    center_expiry_time = None
-    if center:
-        center_is_active = center.is_active
-
-    if center and center.expiry_time:
-        center_expiry_time = center.expiry_time.isoformat()
+    center_is_active = center.is_active if center else False
+    center_expiry_time = center.expiry_time.isoformat() if center and center.expiry_time else None
 
     return (
         jsonify(
@@ -211,7 +155,6 @@ def update_profile(current_user_id):
     if not data:
         return jsonify({"error": "Invalid request body"}), 400
 
-    # Fields both Beneficiary and Field Officer can edit
     if "first_name" in data:
         user.first_name = data["first_name"].strip()
     if "second_name" in data:
@@ -221,9 +164,7 @@ def update_profile(current_user_id):
     if "contact" in data:
         user.contact = str(data["contact"]).strip()
 
-    # BENEFICIARY SPECIFIC UPDATES
     if user.role == "beneficiary":
-        # Beneficiaries can update email if provided
         if "email" in data:
             user.email = data["email"].strip()
 
@@ -259,11 +200,9 @@ def update_profile(current_user_id):
             household.center_id = data["center_id"]
             user.assigned_center_id = data["center_id"]
 
-        # Recalculate vulnerability score on household update
         household.calculate_score()
         household.is_profile_complete = True
 
-    # Save changes
     try:
         db.session.commit()
         return jsonify({"message": "Profile updated successfully"}), 200
@@ -275,37 +214,26 @@ def update_profile(current_user_id):
 @crud_bp.route("/complete-profile", methods=["POST"])
 @token_required
 def complete_profile(current_user_id):
-
     user = Users.query.get(current_user_id)
-
     if not user:
         return jsonify({"error": "User not found"}), 404
 
     if user.role != "beneficiary":
-        return (
-            jsonify({"error": "Unauthorized: Only beneficiaries complete profiles"}),
-            403,
-        )
+        return jsonify({"error": "Unauthorized: Only beneficiaries complete profiles"}), 403
 
     data = request.get_json()
-
     if not data:
         return jsonify({"error": "Invalid request body"}), 400
 
-    # Check if household exists or create one
     household = Household.query.filter_by(user_id=current_user_id).first()
     if not household:
         household = Household(user_id=current_user_id)
         db.session.add(household)
 
-    # Update fields
     household.total_members = data.get("total_members", household.total_members)
-    household.dependents_count = data.get(
-        "dependents_count", household.dependents_count
-    )
-    household.disability_present = data.get(
-        "disability_present", household.disability_present
-    )
+    household.dependents_count = data.get("dependents_count", household.dependents_count)
+    household.disability_present = data.get("disability_present", household.disability_present)
+    
     if "income_level" in data:
         raw_income = data.get("income_level")
         if isinstance(raw_income, (int, float)):
@@ -327,27 +255,16 @@ def complete_profile(current_user_id):
     if household.dependents_count < 0:
         return jsonify({"error": "Dependents cannot be negative."}), 400
 
-    # Calculate score and set status
     household.calculate_score()
     household.is_profile_complete = True
 
     db.session.commit()
-    return (
-        jsonify(
-            {
-                "message": "Profile setup complete",
-                "score": household.vulnerability_score,
-            }
-        ),
-        200,
-    )
+    return jsonify({"message": "Profile setup complete", "score": household.vulnerability_score}), 200
 
 
-# Fetch all distribution centers
 @crud_bp.route("/get-centers", methods=["GET"])
 def get_centers():
     centers = DistributionCenter.query.all()
-
     return (
         jsonify(
             [

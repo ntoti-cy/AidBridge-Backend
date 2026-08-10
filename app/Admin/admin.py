@@ -7,6 +7,7 @@ from app.models import (Users,Household,DistributionCenter,AidTokens,AuditLog,)
 from app.Admin.security import get_current_admin
 from app.Admin.dashboard import get_dashboard_data
 from app.Admin.audit import log_action
+from app.utilis.timezone import make_eat, now_eat
 
 
 class SecureAdminIndexView(AdminIndexView):
@@ -107,17 +108,14 @@ class AidWorkerModelView(ModelView):
         Automatically runs when an admin creates or updates an Aid Worker 
         via the Flask-Admin interface.
         """
-        # 1. Force the role to 'aid_worker' if it's a new entry (or ensure it's protected)
         if is_created:
             model.role = "aid_worker"
-            model.user_type = "smartphone" # Optional, depending on your user setup
+            model.user_type = "smartphone"
             model.requires_password_change = True
 
-        # 2. Hash the password if a new password was provided in the form
         if form.password.data:
             model.password = generate_password_hash(form.password.data)
 
-        # 3. Log the action to your audit logs
         admin_id = session.get("admin_id")
         if is_created:
             log_action(
@@ -137,6 +135,7 @@ class AidWorkerModelView(ModelView):
 
 # Distribution Centers
 class DistributionCenterModelView(ModelView):
+
     can_create = True
     can_edit = True
     can_delete = False
@@ -175,30 +174,44 @@ class DistributionCenterModelView(ModelView):
     }
 
     def on_model_change(self, form, model, is_created):
-        if model.is_active and not model.current_session_id:
-            model.current_session_id = str(uuid.uuid4())
-        elif not model.is_active:
+
+
+        if model.start_time:
+            if model.start_time.tzinfo is None:
+                model.start_time = make_eat(model.start_time)
+
+
+        if model.expiry_time:
+            if model.expiry_time.tzinfo is None:
+                model.expiry_time = make_eat(model.expiry_time)
+
+        if model.is_active:
+
+            if not model.start_time:
+                model.start_time = now_eat()
+
+            if not model.current_session_id:
+                model.current_session_id = str(uuid.uuid4())
+
+        else:
+
             model.current_session_id = None
 
         if is_created:
+
             log_action(
                 session.get("admin_id"),
                 "Distribution Center Created",
                 f"{model.aid_center_name} was created.",
             )
+
         else:
+
             log_action(
                 session.get("admin_id"),
                 "Distribution Center Updated",
                 f"{model.aid_center_name} was updated.",
             )
-
-    def on_model_delete(self, model):
-        log_action(
-            session.get("admin_id"),
-            "Distribution Center Deleted",
-            f"{model.aid_center_name} was deleted.",
-        )
 
 
 # Aid Tokens
