@@ -200,6 +200,78 @@ def get_my_profile(current_user_id):
     )
 
 
+@crud_bp.route("/update-profile", methods=["PUT"])
+@token_required
+def update_profile(current_user_id):
+    user = Users.query.get(current_user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid request body"}), 400
+
+    # Fields both Beneficiary and Field Officer can edit
+    if "first_name" in data:
+        user.first_name = data["first_name"].strip()
+    if "second_name" in data:
+        user.second_name = data["second_name"].strip()
+    if "national_id" in data:
+        user.national_id = str(data["national_id"]).strip()
+    if "contact" in data:
+        user.contact = str(data["contact"]).strip()
+
+    # BENEFICIARY SPECIFIC UPDATES
+    if user.role == "beneficiary":
+        # Beneficiaries can update email if provided
+        if "email" in data:
+            user.email = data["email"].strip()
+
+        household = Household.query.filter_by(user_id=current_user_id).first()
+        if not household:
+            household = Household(user_id=current_user_id)
+            db.session.add(household)
+
+        if "total_members" in data:
+            val = int(data["total_members"])
+            if val < 1:
+                return jsonify({"error": "Total members must be at least 1."}), 400
+            household.total_members = val
+
+        if "dependents_count" in data:
+            val = int(data["dependents_count"])
+            if val < 0:
+                return jsonify({"error": "Dependents cannot be negative."}), 400
+            household.dependents_count = val
+
+        if "disability_present" in data:
+            household.disability_present = bool(data["disability_present"])
+
+        if "income_level" in data:
+            raw_income = data["income_level"]
+            if isinstance(raw_income, (int, float)):
+                household.income_level = float(raw_income)
+            elif isinstance(raw_income, str):
+                cleaned_income = re.sub(r"[^\d.]", "", raw_income)
+                household.income_level = float(cleaned_income) if cleaned_income else 0.0
+
+        if "center_id" in data:
+            household.center_id = data["center_id"]
+            user.assigned_center_id = data["center_id"]
+
+        # Recalculate vulnerability score on household update
+        household.calculate_score()
+        household.is_profile_complete = True
+
+    # Save changes
+    try:
+        db.session.commit()
+        return jsonify({"message": "Profile updated successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Failed to update profile: {str(e)}"}), 500
+
+
 @crud_bp.route("/complete-profile", methods=["POST"])
 @token_required
 def complete_profile(current_user_id):
